@@ -26,38 +26,45 @@
   (check-type port (integer 0 65535)))
 
 (defclass websocket (transport)
-  ((client :accessor websocket-client :initarg :client :type function)
+  ((server :accessor websocket-server :initarg :server :type function)
    (handle :accessor websocket-handle :initform nil :type function)))
 
 
-(defun make-websocket (url &key
+(defun make-websocket (&key
                          (on-open (lambda () ()))
                          (on-close (lambda (&key code reason) (declare (ignore code reason))))
                          (on-message (lambda (message) (declare (ignore message))))
                          (on-error (lambda (error) (declare (ignore error)))))
   "Create a new websocket transport instance"
-  (declare (string url) (function on-open on-close on-message on-error))
+  (declare (function on-open on-close on-message on-error))
   (the websocket
        (let* ((instance (make-instance 'websocket :on-open on-open
                                                   :on-close on-close
                                                   :on-message on-message
                                                   :on-error on-error))
-              (client (wsd:make-client url)))
-         (wsd:on :open client (lambda () (funcall (transport-on-open instance))))
-         (wsd:on :close client (lambda (error) (funcall (transport-on-error error))))
-         (wsd:on :message client (lambda (message) (funcall (transport-on-message instance) message)))
-         (wsd:on :error client  (lambda (&key code reason)
-                                  (funcall (transport-on-message instance) :code code :reason reason)))
-         (setf (websocket-client instance) client)
-         instance)))
+              (handle-open (lambda () (funcall (transport-on-open instance))))
+              (handle-close (lambda (error) (funcall (transport-on-error error))))
+              (handle-message (lambda (message) (funcall (transport-on-message instance) message)))
+              (handle-error (lambda (&key code reason)
+                              (funcall (transport-on-message instance) :code code :reason reason)))
+              (server (lambda (env) (let ((ws (wsd:make-server env)))
+                                      (wsd:on :open ws handle-open)
+                                      (wsd:on :close ws handle-close)
+                                      (wsd:on :message ws handle-message)
+                                      (wsd:on :error ws handle-error)
+                                      (lambda (responder)
+                                        (declare (ignore responder))
+                                        (wsd:start-connection ws))))))
+              (setf (websocket-server instance) server)
+              instance)))
 
 (defmethod transport-open ((self websocket) (port integer))
   (declare (integer port))
   (the websocket
-       (with-slots (handle client) self
+       (with-slots (handle server) self
          (if handle (error "Cannot open a transport that is already open!")
              (progn
-               (setf handle (clack:clackup client :client :wookie :port port))
+               (setf handle (clack:clackup server :server :wookie :port port))
                 self)))))
 
 
@@ -72,5 +79,5 @@
 
 (defmethod transport-send ((self websocket) (message string))
   (the websocket
-       (progn (wsd:send-text (websocket-client self) message)
+       (progn (wsd:send-text (websocket-server self) message)
               self)))

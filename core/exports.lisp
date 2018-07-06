@@ -1,5 +1,6 @@
 (uiop/package:define-package :wamp/exports
     (:nicknames :wamp)
- (:use-reexport :wamp/core/transport))
+  (:use-reexport :wamp/transport)
+  (:use-reexport :wamp/connection))
 
   
