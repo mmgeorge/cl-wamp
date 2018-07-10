@@ -26,6 +26,6 @@
 (defun connection-create-session (self realm)
   (declare (connection self) (string realm))
   (the (values session &optional)
-       (connection-add-session self (make-session realm))))
+       (connection-add-session self (make-session (connection-transport self) realm))))
 
 
