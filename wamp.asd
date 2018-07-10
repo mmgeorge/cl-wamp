@@ -8,12 +8,8 @@
 (asdf:defsystem "wamp/test"
   :class :package-inferred-system
   :depends-on (:wamp/test/transport)
-  :perform (test-op (op c) (uiop:symbol-call :rove '#:run c))
-  )
+  :perform (test-op (op c) (uiop:symbol-call :rove '#:run c)))
 
 (asdf:register-system-packages :rove '(:rove))
 (asdf:register-system-packages :websocket-driver '(:websocket-driver))
 (asdf:register-system-packages :cl-json '(:cl-json))
-
-;(asdf:register-system-packages :wookie '(:wookie))
-;(asdf:register-system-packages :parachute '(:parachute))
