@@ -13,6 +13,4 @@
   (setf *error-output* error-output)
   (setf *standard-output* standard-output))
 
-;(setf *error-output* (make-broadcast-stream))
-;(asdf:load-system )
 (asdf:test-system :wamp)
