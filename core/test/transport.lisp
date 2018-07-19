@@ -16,4 +16,4 @@
 
 (deftest transport-serialize-test
   (testing "serialize a messge"
-      (ok (equal (transport-serialize *sock* '(wamp/message-type:welcome 101)) "[2,101]"))))
+    (ok (equal (transport-serialize *sock* '(wamp/message-type:welcome 101)) "[2,101]"))))

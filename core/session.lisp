@@ -1,29 +1,39 @@
 (defpackage :wamp/session
-  (:use :cl :blackbird
-        :wamp/transport)
-  (:import-from :blackbird)
+  (:use :cl :wamp/transport)
+  (:import-from :lparallel #:future #:force #:delay #:fulfill #:chain)
+  (:import-from :blackbird #:attach #:catcher)
   (:import-from :wamp/transport)
   (:import-from :wamp/message-type)
+  (:import-from :wamp/util #:with-timed-promise)
+  
   (:export #:session #:session-t
            #:session-id
-           #:make-session #:session-open))
+           #:make-session #:session-open
+           #:timeout-exceeded))
 
 (in-package :wamp/session)
 
-
 (deftype session-t () '(values session &optional))
-(deftype promise-t () '(values promise &optional))
+
 
 (defstruct registration
   (id 0 :type integer :read-only t))
 
+
 (defclass empty-options () ())
+
 
 (defclass session ()
   ((transport :reader session-transport :initarg :transport :type transport)
    (realm :reader session-realm :initarg :realm :type string)
-   (awaiting :reader session-awaiting :initform (make-hash-table) :type 'hash-table)
-   (id :accessor session-id :initform 0 :type 'integer)))
+   (awaiting :reader session-awaiting-promises :initform (make-hash-table) :type 'hash-table)
+   (id :accessor session-id :initform 0 :type 'fixnum)
+   (timeout :reader session-timeout :initform 2 :type 'fixnum)))
+
+
+(defparameter %empty-options (make-instance 'empty-options))
+(defparameter %supported-features
+  `(( caller . ,%empty-options )))
 
 
 (defun make-session (transport realm)
@@ -36,14 +46,10 @@
          session)))
 
 
-(defparameter %empty-options (make-instance 'empty-options))
-(defparameter %supported-features
-  `(( caller . ,%empty-options )))
-
 (defun session-open (self)
   (declare (session self))
-  (the promise-t
-       (-session-hello self :roles %supported-features)))
+  (catcher (-session-handshake self :roles %supported-features)
+           (t (e) (format t "Encountered an error while opening session: ~a~%" e))))
 
 
 (defun session-register (self uri procedure &key match)
@@ -52,18 +58,17 @@
        (let ((option (-make-options (pairlis '(match) (list match)))))
          (-session-send-message self 'register (-make-message-id) option uri))))
 
-;; ++ Internal ++
 
-(defun -session-hello (self &key (roles (error "Roles must be specified")))
+;; ++  Internal ++
+
+
+(defun -session-handshake (self &key (roles (error "Roles must be specified")))
   (declare (session self) (list roles))
-  (the promise-t
-       (catcher 
-        (attach (-session-send-await self 'mtype:hello 'mtype:welcome
-                                     (session-realm self)
-                                     (-make-options (pairlis '(roles) (list roles))))
-                (lambda (response) (setf (session-id self) (car response))))
-        (t (e) (format t "Unable to establish wamp session: ~a~%" e)))))
-
+  (attach (-session-send-await self 'mtype:hello 'mtype:welcome
+                               (session-realm self)
+                               (-make-options (pairlis '(roles) (list roles))))
+          (lambda (message)
+            (setf (session-id self) (car message)))))
 
 
 (defun -session-send-message (self type &rest args)
@@ -82,25 +87,17 @@
 
 
 (defun -session-send-await (self type await-type &rest args)
-  "Send a message of a given TYPE with ARGS, awaiting a message of AWAIT-TYPE before resolving. 
-   Create a promise that awaits a message of TYPE with ID"
+  "Send a message of a given TYPE with ARGS, awaiting a message of AWAIT-TYPE. 
+   Returns a promise gg0yielding resulting message" 
   (declare (session self) (mtype:message-t type await-type) (list args))
-  (the promise-t
-       (create-promise
-        (lambda (resolve reject)
-          (declare (ignore reject))
-         ;; Add the resolver for the promise to the awaiting map. Resolved if a match
-          ;; is found in session-handle-message
-          (setf (gethash (mtype:message-t-to-code await-type)
-                         (session-awaiting self))
-                resolve)
-         ;; Reject if we exceed the timeout
-          ;; (async:delay (lambda () (reject :time (session-timeout self))))
-          (transport-send (session-transport self) (cons type args))
-          ))))
-  
-
-
+  (with-timed-promise 1 (resolve reject :resolve-fn resolver)
+    ;; Add the promise to the awaiting map. Resolved if a match
+    ;; is found in session-handle-message
+    (setf (gethash (mtype:message-t-to-code await-type)
+                   (session-awaiting-promises self))
+          resolver)
+    (transport-send (session-transport self) (cons type args))))
+    
 
 (defun -session-handle-message (self type args)
   (declare (session self) (mtype:message-t type) (list args))
@@ -111,11 +108,11 @@
 
 (defun -session-resolve-awaiting (self hash args)
   (declare (session self) (integer hash) (list args))
-  (let ((resolver (gethash hash (session-awaiting self))))
-    (when (null resolver)
-      (error "Corresponding resolver does not exist for message"))
-    (funcall resolver args)
-    (remhash hash (session-awaiting self))))
+  (let ((awaiting-promise (gethash hash (session-awaiting-promises self))))
+    (when (null awaiting-promise)
+      (error "Corresponding promise does not exist for message"))
+    (funcall awaiting-promise args)
+    (remhash hash (session-awaiting-promises self))))
 
 
 (defvar *-id-counter* 0)
@@ -124,5 +121,3 @@
 (defun -make-message-id ()
   (the fixnum
        (incf *-id-counter*)))
-
-;;(defvar *sess (make-session (transport-open (make-websocket "ws://services.owny.io:8080" :on-open (lambda () (format t "Opened!!")))) "realm1"))
