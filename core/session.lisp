@@ -5,7 +5,6 @@
   (:import-from :wamp/transport)
   (:import-from :wamp/message-type)
   (:import-from :wamp/util #:with-timed-promise)
-  
   (:export #:session #:session-t
            #:session-id
            #:make-session #:session-open
@@ -88,9 +87,9 @@
 
 (defun -session-send-await (self type await-type &rest args)
   "Send a message of a given TYPE with ARGS, awaiting a message of AWAIT-TYPE. 
-   Returns a promise gg0yielding resulting message" 
+   Returns a promise yielding the resulting message" 
   (declare (session self) (mtype:message-t type await-type) (list args))
-  (with-timed-promise 1 (resolve reject :resolve-fn resolver)
+  (with-timed-promise (session-timeout self) (resolve reject :resolve-fn resolver)
     ;; Add the promise to the awaiting map. Resolved if a match
     ;; is found in session-handle-message
     (setf (gethash (mtype:message-t-to-code await-type)
@@ -110,7 +109,7 @@
   (declare (session self) (integer hash) (list args))
   (let ((awaiting-promise (gethash hash (session-awaiting-promises self))))
     (when (null awaiting-promise)
-      (error "Corresponding promise does not exist for message"))
+      (error "Recieved a message for which a corresponding resovler does not exist"))
     (funcall awaiting-promise args)
     (remhash hash (session-awaiting-promises self))))
 
