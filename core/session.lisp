@@ -1,10 +1,10 @@
 (defpackage :wamp/session
   (:use :cl :wamp/transport)
   (:import-from :lparallel #:future #:force #:delay #:fulfill #:chain)
-  (:import-from :blackbird #:attach #:catcher)
+  (:import-from :blackbird #:attach #:catcher #:promise)
   (:import-from :wamp/transport)
   (:import-from :wamp/message-type)
-  (:import-from :wamp/util #:with-timed-promise)
+  (:import-from :wamp/util #:with-timed-promise #:promise-of #:defunc)
   (:export #:session #:session-t
            #:session-id
            #:make-session #:session-open
@@ -35,14 +35,12 @@
   `(( caller . ,%empty-options )))
 
 
-(defun make-session (transport realm)
-  (declare (transport transport) (string realm))
-  (the session-t
-       (let ((session (make-instance 'session :transport transport :realm realm)))
-         (setf (transport-on-message transport)
-               (lambda (type args)
-                 (-session-handle-message session type args)))
-         session)))
+(defun make-session ((transport transport) (string realm)) (values session)
+  (let ((session (make-instance 'session :transport transport :realm realm)))
+    (setf (transport-on-message transport)
+          (lambda (type args)
+            (-session-handle-message session type args)))
+    session))
 
 
 (defun session-open (self)
@@ -52,7 +50,9 @@
 
 
 (defun session-register (self uri procedure &key match)
-  (declare (string uri) (function procedure) ((member 'prefix 'wildcard) match))
+  (declare (string uri) (function procedure) ((member 'prefix 'wildcard) match)
+           (ignore procedure))
+  
   (the session-t
        (let ((option (-make-options (pairlis '(match) (list match)))))
          (-session-send-message self 'register (-make-message-id) option uri))))

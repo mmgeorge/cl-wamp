@@ -2,7 +2,8 @@
 (asdf:defsystem "wamp"
   :class :package-inferred-system
   :pathname "core"
-  :depends-on (:wamp/exports)
+  :depends-on (:wamp/util
+               :wamp/exports)
   :in-order-to ((asdf:test-op (asdf:test-op "wamp/test"))))
 
 (asdf:defsystem "wamp/test"
