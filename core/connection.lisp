@@ -1,42 +1,36 @@
 (defpackage :wamp/connection
-  (:use :cl
-   :wamp/transport
-   :wamp/session)
-  (:import-from :wamp/transport)
-  (:import-from :wamp/session))
-
+  (:nicknames #:connection)
+  (:use :cl)
+  (:import-from :wamp/transport/websocket)
+  (:import-from :wamp/transport/transport)
+  (:import-from :wamp/session #:session)
+  (:import-from :wamp/util #:promise-of #:local-nicknames)
+  (:import-from :wamp/decorators #:dtype))
 
 (in-package :wamp/connection)
 
-
-(deftype connection-t () '(values connection &optional))
-
+(local-nicknames :wamp/session :session)
 
 (defclass connection ()
-  ((transport :accessor connection-transport :initarg :transport :type transport)
-   (sessions :reader connection-sessions :initform nil :type (list session))))
+  ((transport :accessor transport :initarg :transport :type transport)
+   (sessions :reader sessions :initform nil :type (list session))))
 
 
+#[(dtype (string) connection)]
 (defun make-connection (url)
-  (declare (string url))
-  (the connection-t
-       (let ((transport (transport-open (make-websocket url))))
-         (make-instance 'connection :transport transport))))
+  "Make a new connection instance"
+  (let ((transport (transport:start (websocket:make-websocket url))))
+    (make-instance 'connection :transport transport)))
 
 
-(defun connection-create-session (self realm)
-  (declare (connection self) (string realm))
-  (the session-t
-       (session-open (-connection-add-session self (make-session (connection-transport self) realm)))))
+#[(dtype (connection string) (promise-of session))]
+(defun create-session (self realm)
+  (session:start (-add-session self (session:make-session (transport self) realm))))
 
 
-;; ++ Internal ++
-
-
-(defun -connection-add-session (self session)
-  (declare (connection self) (session session))
-  (the session
-       (with-slots (sessions) self
-         (progn (setf sessions (cons session session))
-              session))))
-
+; ++ Internal ++
+#[(dtype (connection session) session)]
+(defun -add-session (self session)
+  (with-slots (sessions) self
+    (setf sessions (cons session session))
+    session))

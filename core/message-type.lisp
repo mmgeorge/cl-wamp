@@ -25,12 +25,14 @@
            #:yield
 
            #:code-to-message-t
+           #:to-num
            #:message-t-to-code))
 
 (in-package :wamp/message-type)
 
 (deftype message-t ()
   '(member
+    unknown
     hello
     welcome
     abort
@@ -80,6 +82,33 @@
 
 
 (defun message-t-to-code (message-type)
+  (declare (type message-t message-type))
+  (the fixnum
+       (case message-type
+         (hello 1)
+         (welcome 2)
+         (abort 3)
+         (goodbye 6)
+         (error 8)
+         (publish 16)
+         (published 17)
+         (subscribe 32)
+         (subscribed 33)
+         (unsubscribe 34)
+         (unsubscribed 35)
+         (event 36)
+         (call 48)
+         (result 50)
+         (register 64)
+         (registered 65)
+         (unregister 66)
+         (unregistered 67)
+         (invocation 68)
+         (yield 70)
+         (t (error "Encountered unknown message type: ~a" message-type)))))
+
+
+(defun to-num (message-type)
   (declare (type message-t message-type))
   (the fixnum
        (case message-type

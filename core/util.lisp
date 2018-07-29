@@ -5,10 +5,41 @@
   (:export #:with-timed-promise
            #:timeout-exceeded
            #:promise-of
-           #:defunc))
+           #:define-ftype
+           #:defunx))
 
 (in-package :wamp/util)
 
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun values-p (type-spec)
+    (and (listp type-spec)
+         (symbolp (car type-spec))
+         (string-equal "values" (symbol-name (car type-spec))))))
+
+
+(defmacro dtype (name arg-types ret-type)
+  (let ((ret (if (values-p ret-type)
+                 ret-type
+                 `(values ,ret-type &optional))))
+    `(declaim (ftype (function ,arg-types ,ret) ,name))))
+
+
+
+(defmacro local-nicknames (&body body)
+  `(eval-when (:compile-toplevel :load-toplevel :execute)
+     ,@(loop for (package nickname) on body by #'cddr
+             collect `
+
+             #+sbcl (sb-ext:add-package-local-nickname ,nickname ,package )
+             
+             ;;(rename-package ,package ,package '(,nickname))
+
+
+             )))
+
+
+;; Remove all this out 
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun amp-p (sym)
@@ -20,45 +51,59 @@
   (defun type-specifier-p (form)
     "Attempts to check whether FORM is a typespecifier. To ensure portability, 
      use (values [TYPESPECIFIER]*)"
-    (or
-     ;; First try to detect type in a platform-dependent way
-     #+sbcl (sb-ext:valid-type-specifier-p form)
-     #-sbcl (documentation type-specifier 'type)
-     #+openmcl (ccl:type-specifier-p form)
-     #+ecl (c::valid-type-specifier form)
-     #+clisp (null (nth-value 1 (ignore-errors (ext:type-expand form))))
 
-     ;; Fallback - check for a values form or a symbol
-     (and (listp form)
-          (symbolp (car form))
-          (string-equal "values" (symbol-name (car form))))
-     (symbolp form))))
+    ;; Using this appears to work, but will log a style warning during compilation
+    ;; #+sbcl (sb-ext:valid-type-specifier-p form)
+
+    ;; TODO - clean up this logic
+    ;; Technically we need to also make sure that body exists to avoid a case like
+    ;;   (defunx fun ()
+    ;;      (values) <- deduced as type
+    ;;      (do-something))
+    (if (and (listp form) (symbolp (car form)))
+        (or (and (string-equal "values" (symbol-name (car form)))
+                 (cadr form)
+                 (symbolp (cadr form))
+                 #+sbcl (sb-ext:defined-type-name-p (cadr form))
+                 #-sbcl nil)
+            #+sbcl (sb-ext:defined-type-name-p (car form))
+            #+openmcl (ccl:type-specifier-p form)
+            #+ecl (c::valid-type-specifier form)
+            #+clisp (null (nth-value 1 (ignore-errors (ext:type-expand form)))))
+
+        ;; Otherwise we are not a list
+        (and (symbolp form)
+             #+sbcl (sb-ext:defined-type-name-p form)
+             #+openmcl (ccl:type-specifier-p form)
+             #+ecl (c::valid-type-specifier form)
+             #+clisp (null (nth-value 1 (ignore-errors (ext:type-expand form))))))))
 
 
-(defmacro defunc (name arglist &body body)
+(defmacro defunx (name arglist &body body)
   "A macro that can be used to define a function and it's associated ftype
    Examples: 
      Declare a function that adds two fixnums:
-       (defun myadd ((fixnum a) (fixnum b)) fixnum 
+       (defun myadd ((a fixnum) (b fixnum)) fixnum 
          (+ a b)
 
      Additionally the macro supports agreggating types as with declare: 
-       (defun myadd ((fixnum a b)) fixnum 
+       (defun myadd ((a b fixnum)) fixnum 
          (+ a b)
 
      Any valid type specifier works, so we can also declare multiple return values, i.e. 
-       (defun my-multivalue-add ((fixnum a b)) (values fixnum fixnum)
+       (defun my-multivalue-add ((a b fixnum)) (values fixnum fixnum)
          (values (+ a b) a b)"
   (let* ((f-args nil)
          (ftype-args nil)
          (ret-type (and (type-specifier-p (car body)) (car body))))
     (loop for form in arglist
-          ;; If we have a typename, then the argument is a list of (TYPENAME &rest VARS)
+          ;; If we have a typename, then the argument is a list of (VARS TYPE)
           if (listp form) do
-            (destructuring-bind (type &rest vars) form
+            (let ((type (car (last form)))
+                  (vars (butlast form)))
               (dolist (var vars)
                 (push type ftype-args)
-o                (push var f-args)))
+                (push var f-args)))
             ;; Either we have untyped fun arg
           else do
             (push form f-args)

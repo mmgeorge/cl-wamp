@@ -1,19 +1,20 @@
 (defpackage :wamp/session
-  (:use :cl :wamp/transport)
+  (:use :cl)
   (:import-from :lparallel #:future #:force #:delay #:fulfill #:chain)
-  (:import-from :blackbird #:attach #:catcher #:promise)
-  (:import-from :wamp/transport)
+  (:import-from :blackbird #:attach #:catcher #:promise #:wait)
+  (:import-from :wamp/transport/transport #:transport)
+  (:import-from :wamp/transport/websocket #:make-websocket)
   (:import-from :wamp/message-type)
-  (:import-from :wamp/util #:with-timed-promise #:promise-of #:defunc)
-  (:export #:session #:session-t
-           #:session-id
-           #:make-session #:session-open
+  (:import-from :wamp/util #:with-timed-promise #:promise-of #:defunx)
+  (:import-from :wamp/decorators #:dtype)
+  (:export #:session #:make-session
+           #:id
+           #:start
            #:timeout-exceeded))
 
 (in-package :wamp/session)
 
-(deftype session-t () '(values session &optional))
-
+(deftype match-t () '(member prefix wildcard))
 
 (defstruct registration
   (id 0 :type integer :read-only t))
@@ -21,102 +22,131 @@
 
 (defclass empty-options () ())
 
-
-(defclass session ()
-  ((transport :reader session-transport :initarg :transport :type transport)
-   (realm :reader session-realm :initarg :realm :type string)
-   (awaiting :reader session-awaiting-promises :initform (make-hash-table) :type 'hash-table)
-   (id :accessor session-id :initform 0 :type 'fixnum)
-   (timeout :reader session-timeout :initform 2 :type 'fixnum)))
-
-
 (defparameter %empty-options (make-instance 'empty-options))
+
 (defparameter %supported-features
   `(( caller . ,%empty-options )))
 
 
-(defun make-session ((transport transport) (string realm)) (values session)
-  (let ((session (make-instance 'session :transport transport :realm realm)))
-    (setf (transport-on-message transport)
-          (lambda (type args)
-            (-session-handle-message session type args)))
+(defclass session ()
+  ((transport :reader transport :initarg :transport :type transport)
+   (realm :reader realm :initarg :realm :type string)
+   (awaiting :reader awaiting-promises :initform (make-hash-table) :type 'hash-table)
+   (id :accessor id :initform 0 :type 'fixnum)
+   (timeout :reader timeout :initform 2 :type 'fixnum)))
+
+;; ++ Lifecycle ++
+
+#[(dtype (string string) session)]
+(defun make-session (url realm)
+  "Makes a new session instance for the given URL and REALM. A session represents the 
+   communication channel between a wamp client and router. While WAMP technically allows 
+   for multiple transportation types only websockets are currently supported"
+  (let* ((transport (make-websocket url))
+         (session (make-instance 'session :transport transport :realm realm))
+         (on-message (lambda (type args) (-handle-message session type args))))
+    (setf (transport:on-message transport) on-message)
     session))
 
 
-(defun session-open (self)
-  (declare (session self))
-  (catcher (-session-handshake self :roles %supported-features)
-           (t (e) (format t "Encountered an error while opening session: ~a~%" e))))
+#[(dtype (session) promise)]
+(defun start (self)
+  "Opens the session SELF. Returns a promise that resolves when the socket has opened
+   and the basic handshake has been established"
+  (catcher 
+   (wait (transport:start (transport self))
+     (-handshake self :roles %supported-features))
+   (t (e) (format t "Encountered an error while starting session: ~a~%" e))))
 
 
-(defun session-register (self uri procedure &key match)
-  (declare (string uri) (function procedure) ((member 'prefix 'wildcard) match)
-           (ignore procedure))
-  
-  (the session-t
-       (let ((option (-make-options (pairlis '(match) (list match)))))
-         (-session-send-message self 'register (-make-message-id) option uri))))
+;; ++ WAMP Procedures ++
+
+#[(dtype (session string function &key (:match match-t)) (promise-of message))]
+(defun register (self uri procedure &key match)
+  "Register a given procedure with the match aguments
+   and does something"
+  (declare (ignore procedure))
+  (let ((option (-make-options (pairlis '(match) (list match))))
+        (id (-create-message-id)))
+    (-send-message self 'mtype:register (list id option uri))))
 
 
 ;; ++  Internal ++
 
 
-(defun -session-handshake (self &key (roles (error "Roles must be specified")))
-  (declare (session self) (list roles))
-  (attach (-session-send-await self 'mtype:hello 'mtype:welcome
-                               (session-realm self)
-                               (-make-options (pairlis '(roles) (list roles))))
+#[(dtype (session &key (:roles list)) promise)]
+(defun -handshake (self &key (roles (error "Roles must be specified")))
+  "Initiate a handshake with the router. Returns a promise that resolves
+   when the handshake has finished"
+  (attach (-send-await self 'mtype:hello (-make-options (pairlis '(roles) (list roles))))
           (lambda (message)
-            (setf (session-id self) (car message)))))
+            (setf (id self) (car message)))))
 
 
-(defun -session-send-message (self type &rest args)
-  (declare (session self) (mtype:message-t type) (list args))
-  (the session-t
-       (progn (transport-send (session-transport self) (cons type args))
-              self)))
+#[(dtype (session mtype:message-t list) session)]
+(defun -send-message (self type args)
+  (transport:send (transport self) (cons type args))
+  self)
 
 
+#[(dtype (list) list)]
 (defun -make-options (assoc)
   "Encodes an association list as an assoc (removing nulls) or empty object."
-  (declare (list assoc))
-  (the list
-       (if (null assoc) %empty-options
-           (remove-if-not #'cdr assoc))))
+  (if (null assoc) %empty-options
+      (remove-if-not #'cdr assoc)))
 
 
-(defun -session-send-await (self type await-type &rest args)
+#[(dtype (session mtype:message-t mtype:message-t &rest list) promise)]
+(defun -send-await (self type await-type &rest args)
   "Send a message of a given TYPE with ARGS, awaiting a message of AWAIT-TYPE. 
    Returns a promise yielding the resulting message" 
-  (declare (session self) (mtype:message-t type await-type) (list args))
-  (with-timed-promise (session-timeout self) (resolve reject :resolve-fn resolver)
+  (with-timed-promise (timeout self) (resolve reject :resolve-fn resolver)
     ;; Add the promise to the awaiting map. Resolved if a match
     ;; is found in session-handle-message
     (setf (gethash (mtype:message-t-to-code await-type)
-                   (session-awaiting-promises self))
+                   (awaiting-promises self))
           resolver)
-    (transport-send (session-transport self) (cons type args))))
+    (transport:send (transport self) (cons type args))))
     
 
-(defun -session-handle-message (self type args)
-  (declare (session self) (mtype:message-t type) (list args))
+(defun -lookup-response-hash (message)
+  "Create a hash for the designated response of the given MESSAGE. This hash code
+   is used to map replies from the websocket router to outstanding promises. 
+   NIL is returned when no response is expected"
+  (case (car message)
+    (mtype:hello (mtype:to-num 'mtype:welcome))
+    (mtype:goodbye (mtype:to-num 'mtype:goodbye))
+    (mtype:published (sxhash (cons (mtype:to-num 'mtype:published) (cadr message))))
+    (mtype:subscribe (sxhash (cons (mtype:to-num 'mtype:subscribed) (cadr message))))
+    (mtype:unsubscribe (sxhash (cons (mtype:to-num 'mtype:unsubscribed) (cadr message))))
+    (mtype:call (sxhash (cons (mtype:to-num 'mtype:result) (cadr message))))
+    (mtype:register (sxhash (cons (mtype:to-num 'mtype:registered) (cadr message))))
+    (mtype:unregister (sxhash (cons (mtype:to-num 'mtype:unregistered) (cadr message))))
+    (mtype:invocation (sxhash (cons (mtype:to-num 'mtype:yield) (cadr message))))
+    (t (error (format nil "~a does not expect a response~%" (car message))))))
+
+
+#[(dtype (session mtype:message-t list) null)]
+(defun -handle-message (self type args)
   (case type
-    (mtype:welcome (-session-resolve-awaiting self (mtype:message-t-to-code type) args))
-    (t (error "Encountered unknown message type"))))
+    (mtype:welcome (-resolve-awaiting self (mtype:message-t-to-code type) args))
+    (t (error "Encountered unknown message type")))
+  nil)
 
 
-(defun -session-resolve-awaiting (self hash args)
-  (declare (session self) (integer hash) (list args))
-  (let ((awaiting-promise (gethash hash (session-awaiting-promises self))))
+#[(dtype (session integer list) null)]
+(defun -resolve-awaiting (self hash args)
+  (let ((awaiting-promise (gethash hash (awaiting-promises self))))
     (when (null awaiting-promise)
       (error "Recieved a message for which a corresponding resovler does not exist"))
     (funcall awaiting-promise args)
-    (remhash hash (session-awaiting-promises self))))
+    (remhash hash (awaiting-promises self))
+    nil))
 
 
 (defvar *-id-counter* 0)
 
 
-(defun -make-message-id ()
-  (the fixnum
-       (incf *-id-counter*)))
+#[(dtype () fixnum)]
+(defun -create-message-id ()
+  (incf *-id-counter*))
