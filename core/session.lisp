@@ -59,21 +59,6 @@
    (t (e) (format t "Encountered an error while starting session: ~a~%" e))))
 
 
-;; ++ WAMP Procedures ++
-
-#[(dtype (session string function &key (:match match-t)) (promise-of message))]
-(defun register (self uri procedure &key match)
-  "Register a given procedure with the match aguments
-   and does something"
-  (declare (ignore procedure))
-  (let ((option (-make-options (pairlis '(match) (list match))))
-        (id (-create-message-id)))
-    (-send-message self 'mtype:register (list id option uri))))
-
-
-;; ++  Internal ++
-
-
 #[(dtype (session &key (:roles list)) promise)]
 (defun -handshake (self &key (roles (error "Roles must be specified")))
   "Initiate a handshake with the router. Returns a promise that resolves
@@ -83,10 +68,29 @@
             (setf (id self) (car message)))))
 
 
-#[(dtype (session mtype:message-t list) session)]
-(defun -send-message (self type args)
-  (transport:send (transport self) (cons type args))
-  self)
+#[(dtype (session) promise)]
+(defun stop (self)
+  "Stops the session SELF. Returns a promise that resolves when the connection has been closed
+   and the corresponding GOODBYE message has been recieved"
+  (catcher 
+   (wait (-send-await self 'mtype:goodbye %empty-options "wamp.close.system_shutdown")
+     (transport:stop (transport self)))
+   (t (e) (format t "Encountered an error while shutting down session session: ~a~%" e))))
+
+
+;; ++ WAMP Procedures ++
+
+#[(dtype (session string function &key (:match match-t)) (promise-of list))]
+(defun register (self uri procedure &key match)
+  "Register a given procedure with the match aguments
+   and does something"
+  (declare (ignore procedure))
+  (let ((option (-make-options (pairlis '(match) (list match))))
+        (id (-create-message-id)))
+    (-send-await self 'mtype:register (list id option uri))))
+
+
+;; ++  Internal ++
 
 
 #[(dtype (list) list)]
@@ -96,34 +100,42 @@
       (remove-if-not #'cdr assoc)))
 
 
-#[(dtype (session mtype:message-t mtype:message-t &rest list) promise)]
-(defun -send-await (self type await-type &rest args)
+#[(dtype (session mtype:message-t list) null)]
+(defun -send (self type args)
+  "Sends a message of TYPE with ARGS"
+  (transport:send (transport self) (cons type args))
+  nil)
+
+
+#[(dtype (session mtype:message-t &rest t) promise)]
+(defun -send-await (self type &rest args)
   "Send a message of a given TYPE with ARGS, awaiting a message of AWAIT-TYPE. 
    Returns a promise yielding the resulting message" 
   (with-timed-promise (timeout self) (resolve reject :resolve-fn resolver)
     ;; Add the promise to the awaiting map. Resolved if a match
     ;; is found in session-handle-message
-    (setf (gethash (mtype:message-t-to-code await-type)
+    (setf (gethash (-lookup-response-hash type args)
                    (awaiting-promises self))
           resolver)
     (transport:send (transport self) (cons type args))))
     
 
-(defun -lookup-response-hash (message)
+#[(dtype (mtype:message-t &rest t) fixnum)]
+(defun -lookup-response-hash (type &rest args)
   "Create a hash for the designated response of the given MESSAGE. This hash code
    is used to map replies from the websocket router to outstanding promises. 
    NIL is returned when no response is expected"
-  (case (car message)
+  (case type
     (mtype:hello (mtype:to-num 'mtype:welcome))
     (mtype:goodbye (mtype:to-num 'mtype:goodbye))
-    (mtype:published (sxhash (cons (mtype:to-num 'mtype:published) (cadr message))))
-    (mtype:subscribe (sxhash (cons (mtype:to-num 'mtype:subscribed) (cadr message))))
-    (mtype:unsubscribe (sxhash (cons (mtype:to-num 'mtype:unsubscribed) (cadr message))))
-    (mtype:call (sxhash (cons (mtype:to-num 'mtype:result) (cadr message))))
-    (mtype:register (sxhash (cons (mtype:to-num 'mtype:registered) (cadr message))))
-    (mtype:unregister (sxhash (cons (mtype:to-num 'mtype:unregistered) (cadr message))))
-    (mtype:invocation (sxhash (cons (mtype:to-num 'mtype:yield) (cadr message))))
-    (t (error (format nil "~a does not expect a response~%" (car message))))))
+    (mtype:published (sxhash (cons (mtype:to-num 'mtype:published) (cadr args))))
+    (mtype:subscribe (sxhash (cons (mtype:to-num 'mtype:subscribed) (cadr args))))
+    (mtype:unsubscribe (sxhash (cons (mtype:to-num 'mtype:unsubscribed) (cadr args))))
+    (mtype:call (sxhash (cons (mtype:to-num 'mtype:result) (cadr args))))
+    (mtype:register (sxhash (cons (mtype:to-num 'mtype:registered) (cadr args))))
+    (mtype:unregister (sxhash (cons (mtype:to-num 'mtype:unregistered) (cadr args))))
+    (mtype:invocation (sxhash (cons (mtype:to-num 'mtype:yield) (cadr args))))
+    (t (error "~a does not expect a response~%" type))))
 
 
 #[(dtype (session mtype:message-t list) null)]
