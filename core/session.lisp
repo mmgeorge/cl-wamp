@@ -23,7 +23,8 @@
        (format t "~%"))))
 
 
-(deftype match-t () '(member prefix wildcard))
+(deftype match-t () '(member "prefix" "wildcard" :test #'string-equal))
+(deftype invoke-t () '(member "first" "last" "roundrobin" "random" :test #'string-equal))
 
 (defclass empty-options () ())
 
@@ -109,11 +110,14 @@
 
 ;; ++ WAMP Procedures ++
 
-#[(dtype (session string function &key (:match match-t)) (promise-of registration))]
-(defun register (self uri procedure &key match)
-  "Register a the given PROCEDURE withthe given URI. Returns a promise with the 
-   registration info when registratoin has been sucessfull completed"
-  (let ((options (-make-options (pairlis '(match) (list match))))
+#[(dtype (session string function &key (:match match-t) (:invoke invoke-t)) (promise-of registration))]
+(defun register (self uri procedure &key match invoke)
+  "Register a the given PROCEDURE with the given URI. Returns a promise with the 
+   registration info on completion
+
+   :MATCH - Specify how to match the passed URI. Either 'prefix' or 'wildcard'
+   :INVOKE - Allow multiple registrations. One of 'first', 'last', 'random' 'roundrobin'"
+  (let ((options (-make-options (pairlis '(match invoke) (list match invoke))))
         (id (-create-message-id))
         (registration (-register-function self uri procedure)))
     (chain (-send-await self 'mtype:register (list id options uri))
@@ -139,10 +143,10 @@
 
 #[(dtype (session string function) registration)]
 (defun -register-function (self uri procedure)
-  (let ((entry (gethash uri (registered self))))
-    (when (not entry)
-      (error "Unable to register ~a as it is already registered!~%" uri))
-    (setf (gethash uri (registered self)) (make-registration :uri uri :procedure procedure))))
+  (if (gethash uri (registered self))
+      (error "Unable to register ~a as it is already registered!~%" uri)
+      (setf (gethash uri (registered self))
+            (make-registration :uri uri :procedure procedure))))
 
 
 #[(dtype (session string) t)]
@@ -253,14 +257,16 @@
 
 
 
-;(defun tfun (a b) (+ a b))
+(defun tfun3 (a b)
+  (+ a b))
 
 
-(defvar *session*)
+o(defvar *session*)
+
 (defun test ()
   (setf *session* (make-session "ws://138.68.246.180:8080/ws" "realm1"))
   (attach (start *session*)
-          (register *session* "tfun2" #'(lambda (x y) (+ x y)))))
+          (register *session* "com.app.tfun3" #'tfun3 :invoke "random")))
 
 
 #[(dtype () fixnum)]
