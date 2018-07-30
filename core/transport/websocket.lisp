@@ -11,50 +11,73 @@
 (in-package :wamp/transport/websocket)
 
 
+
+(defconstant %DEBUG_PRINT% t)
+
+(defmacro debug-print (control &rest args)
+  (when %DEBUG_PRINT%
+    `(progn
+       (format t "wamp/transport/websocket:")
+       (funcall #'format ,@(cons t (cons control args)))
+       (format t "~%"))))
+
+
 (defclass websocket (transport)
-  ((client :accessor websocket-client :initarg :client :type function)
+  ((url :reader websocket-url :initarg :url :type string)
+   (client :accessor websocket-client :initarg :client :type function)
    (handle :accessor websocket-handle :initform nil :type function)))
-           
+
 
 #[(dtype (string &key (:on-open function) (:on-close function) (:on-message function) (:on-error function)) websocket)]
 (defun make-websocket (url &key
                          (on-open (lambda () ()))
-                         (on-close (lambda (&key code reason) (declare (ignore code reason))))
+                         (on-close #'-handle-close)
                          (on-message (lambda (type args) (declare (ignore type args))))
                          (on-error (lambda (error) (declare (ignore error)))))
   "Create a new websocket transport instance"
   (declare (string url) (function on-open on-close on-message on-error))
   (the websocket
-       (let* ((instance (make-instance 'websocket :on-open on-open
+       (let* ((instance (make-instance 'websocket :url url
+                                                  :on-open on-open
                                                   :on-close on-close
                                                   :on-message on-message
                                                   :on-error on-error))
               (client (wsd:make-client url :accept-protocols '("wamp.2.json"))))
          (wsd:on :open client (lambda () (funcall (transport:on-open instance))))
-         (wsd:on :close client (lambda (error) (funcall (transport:on-error error))))
+         (wsd:on :error client (lambda (error) (funcall (transport:on-error error))))
          (wsd:on :message client (lambda (message) (-transport-handle-message instance message)))
-         (wsd:on :error client  (lambda (&key code reason)
-                                  (funcall (transport:on-message instance) :code code :reason reason)))
+         (wsd:on :close client  (lambda (&key code reason)
+                                  (-handle-close :code code :reason reason)
+                                  (funcall (transport:on-close instance) :code code :reason reason)))
          (setf (websocket-client instance) client)
          instance)))
 
 
+#[(dtype (&key (:code (or null fixnum)) (:reason t)) null)]
+(defun -handle-close (&key code reason)
+  (declare (ignore reason))
+  (debug-print "close: Transport closing code: ~a" code))
+
+
 (defmethod transport:start ((self websocket))
+  (debug-print "start: Starting transport on ~a" (websocket-url self))
   (the websocket
        (progn (wsd:start-connection (websocket-client self))
               self)))
 
 
 (defmethod transport:stop ((self websocket))
+  (debug-print "stop: Stopping transport")
   (the websocket
        (progn (wsd:close-connection (websocket-client self))
               self)))
 
 
 (defmethod transport:send ((self websocket) (message list))
-  (the websocket
-       (progn (wsd:send-text (websocket-client self) (transport:serialize self message))
-              self)))
+  (debug-print "send: Sending message: ~a" message)
+  (let ((serialized (transport:serialize self message)))
+    (debug-print "send: Serialized message as: ~a" serialized)
+    (wsd:send-text (websocket-client self) serialized)))
 
 
 (defmethod transport:mock ((self websocket) (message list))
@@ -79,9 +102,11 @@
 ;; ++ Internal ++
 
 (defun -transport-handle-message (self message)
+  (debug-print "send: Recieved message: ~a" message)
   (let ((message (handler-case (transport:deserialize self message)
                    ;; Ignore any malformed messages
                    (t () nil)) ))
     (when message
+      (debug-print "send: Decoded message: ~a" (car message))
       (funcall (transport:on-message self) (car message) (cdr message)))))
 
