@@ -47,7 +47,10 @@
    (realm :reader realm :initarg :realm :type string)
    (id :accessor id :initform 0 :type 'fixnum)
    (awaiting :reader awaiting-promises :initform (make-hash-table) :type 'hash-table)
-   (registered :reader registered :initform (make-hash-table :test #'equal) :type 'hash-table)
+   ;; fname -> registration
+   (registered :reader registered :initform (make-hash-table :test #'equal) :type 'hash-table) 
+   ;; fid -> registration
+   (rpcs :reader rpcs :initform (make-hash-table) :type 'hash-table)
    (timeout :reader timeout :initform 30 :type 'fixnum)))
 
 
@@ -84,7 +87,7 @@
 
 #[(dtype (session) t)]
 (defun -reconnect (self)
- (start self))
+  (start self))
 
 
 #[(dtype (session) promise)]
@@ -124,10 +127,24 @@
       (:attach (message)
                (format t "adding registration ~a" (cadr message))
                (setf (registration-id registration) (cadr message))
+               (-add-rpc self registration)
                registration)
       (:catcher (e)
                 (format t "Encountered error while registering session: ~a~%" e)
                 (-unregister-function self uri)))))
+
+
+#[(dtype (session string &key (:args list) (:kwargs list)) (promise-of (values * *)))]
+(defun call (self uri &key args kwargs)
+  (let ((options %empty-options)
+        (id (-create-message-id)))
+    (attach (-send-await self 'mtype:call (remove nil (list id options uri args kwargs)))
+            (lambda (result) 
+               (destructuring-bind (request-id options &optional args kwargs) result
+                 (declare (ignore request-id options))
+                 (values args kwargs)
+                 )))))
+    
 
 
 ;; ++  Internal ++
@@ -156,6 +173,20 @@
       (error "Unable to unregister ~a as no such procedure exists!~%" uri))
     t))
 
+
+#[(dtype (session registration) t)]
+(defun -add-rpc (self registration)
+  (if (gethash (registration-id registration) (rpcs self))
+      (error "Unable to set RPC for ~a as such an RPC entry already exists!~%" registration) 
+      (setf (gethash (registration-id registration) (rpcs self)) registration)))
+
+
+#[(dtype (session registration) t)]
+(defun -remove-rpc (self registration)
+  (let ((did-remove (remhash (registration-id registration) (rpcs self))))
+    (when (not did-remove)
+      (error "Unable to remove RPC ~a as no such RPC entry exists!~%" registration))
+    t))
 
 
 #[(dtype (list) t)]
@@ -225,9 +256,11 @@
 #[(dtype (session mtype:message-t list) *)]
 (defun -handle-message (self type args)
   (debug-print "handling message: type: ~a args: ~a~%" type args)
-  (cond ((-response-without-id-p type) (-resolve-awaiting self (mtype:to-num type) args))
+  (cond ((eq 'mtype:invocation type) (-handle-invokation self args))
+        ((-response-without-id-p type) (-resolve-awaiting self (mtype:to-num type) args))
         ((-response-with-id-p type) (-resolve-awaiting self (sxhash (cons (mtype:to-num type) (car args))) args))
         ((eq 'mtype:error type) (-reject-awaiting self args))
+        
         (t (error "Unable to handle unknown message type ~a~%" type))))
 
 
@@ -253,6 +286,35 @@
     nil))
 
 
+#[(dtype (session fixnum *) null)]
+(defun -yield (self request-id result)
+  (-send self 'mtype:yield (list request-id %empty-options result)))
+
+
+#[(dtype (session list) *)]
+(defun -handle-invokation (self message)
+  (handler-case
+      (destructuring-bind (request-id registration-id options &optional args kwargs) message
+        (declare (ignore options))
+        (let* ((registration (gethash registration-id (rpcs self))))
+          (-yield self request-id
+                  (multiple-value-list (apply (registration-procedure registration) (append args kwargs))))))
+
+    ;; MG: Can we allow user to specify their own handlers?
+    ;;     Or maybe we allow configuration option as to whether to broadcast interal_errors
+    ;;     (i.e. so that it can be used for development)
+    
+    ((or type-error #+sbcl sb-int:simple-program-error) (e)
+      (format t "WAMP ERROR: Encountered a TYPE-ERROR error during function invokation: ~a~%" e)
+      (-send self 'mtype:error (list (mtype:to-num 'mtype:invocation)
+                                     (car message) %empty-options "wamp.error.invalid_argument" nil
+                                     `((details . ,(format nil "~a" e))))))
+    (t (e)
+      (format t "WAMP ERROR: Encountered an error during function invokation: ~a~%" e)
+      (-send self 'mtype:error (list (mtype:to-num 'mtype:invocation)
+                                     (car message) %empty-options "cl.wamp.error.internal_error")))))
+
+
 (defvar *-id-counter* 0)
 
 
@@ -261,12 +323,14 @@
   (+ a b))
 
 
-o(defvar *session*)
+(defvar *session*)
 
 (defun test ()
   (setf *session* (make-session "ws://138.68.246.180:8080/ws" "realm1"))
-  (attach (start *session*)
-          (register *session* "com.app.tfun3" #'tfun3 :invoke "random")))
+   (start *session*))
+
+
+;(register *session* "com.app.tfun3" #'tfun3 :invoke "random")))
 
 
 #[(dtype () fixnum)]
