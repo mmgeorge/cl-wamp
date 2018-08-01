@@ -9,6 +9,7 @@
   (:export #:session #:make-session
            #:id
            #:start
+
            #:timeout-exceeded))
 
 (in-package :wamp/session)
@@ -51,7 +52,9 @@
    (registered :reader registered :initform (make-hash-table :test #'equal) :type 'hash-table) 
    ;; fid -> registration
    (rpcs :reader rpcs :initform (make-hash-table) :type 'hash-table)
-   (timeout :reader timeout :initform 30 :type 'fixnum)))
+   (timeout :reader timeout :initform 30 :type 'fixnum)
+   (log-serious-conditions :reader log-serious-conditions :initarg log-serious-conditions :initform t :type 'boolean)
+   (log-output :accessor log-output :initarg log-output :initform *error-output* :type 'stream )))
 
 
 ;; ++ Lifecycle ++
@@ -292,27 +295,41 @@
 
 
 #[(dtype (session list) *)]
-(defun -handle-invokation (self message)
-  (handler-case
-      (destructuring-bind (request-id registration-id options &optional args kwargs) message
-        (declare (ignore options))
-        (let* ((registration (gethash registration-id (rpcs self))))
-          (-yield self request-id
-                  (multiple-value-list (apply (registration-procedure registration) (append args kwargs))))))
+(defun -call-local-rpc (self message)
+  (destructuring-bind (request-id registration-id options &optional args kwargs) message
+    (declare (ignore options))
+    (let* ((registration (gethash registration-id (rpcs self))))
+      (-yield self request-id
+              (multiple-value-list (apply (registration-procedure registration) (append args kwargs)))))))
 
-    ;; MG: Can we allow user to specify their own handlers?
-    ;;     Or maybe we allow configuration option as to whether to broadcast interal_errors
-    ;;     (i.e. so that it can be used for development)
-    
+
+#[(dtype (session list) *)]
+(defun -handle-invokation (self message)
+  (handler-case (-call-local-rpc self message)
+    ;; Likely indicates an error in how the function was called
     ((or type-error #+sbcl sb-int:simple-program-error) (e)
-      (format t "WAMP ERROR: Encountered a TYPE-ERROR error during function invokation: ~a~%" e)
+      (-log self "A TYPE-ERROR error during function invocation: ~a~%" e)
       (-send self 'mtype:error (list (mtype:to-num 'mtype:invocation)
                                      (car message) %empty-options "wamp.error.invalid_argument" nil
                                      `((details . ,(format nil "~a" e))))))
-    (t (e)
-      (format t "WAMP ERROR: Encountered an error during function invokation: ~a~%" e)
-      (-send self 'mtype:error (list (mtype:to-num 'mtype:invocation)
-                                     (car message) %empty-options "cl.wamp.error.internal_error")))))
+
+    ;; A fatal error or serious condition has occured. Returning a detailed error message is configurable
+    (serious-condition (e)
+      (-log self "A SERIOUS-CONDITION occured during function invocation: ~a~%" e)
+      (let* ((base-args (list (mtype:to-num 'mtype:invocation)
+                              (car message) %empty-options "cl.wamp.error.serious_condition"))
+             (all-args (if (log-serious-conditions self)
+                           (append base-args (list nil `((details . ,(format nil "~a" e)))))
+                           base-args)))
+        (-send self 'mtype:error all-args)))))
+
+
+#[(dtype (session string &rest *) *)]
+(defun -log (self control-string &rest args)
+  (multiple-value-bind (second minute hour date month year) (get-decoded-time) 
+    (apply #'format (log-output self)
+           (concatenate 'string "~a:~a:~a ~a/~a/~a (UTC) WAMP Error: " control-string)
+           (append (list hour minute second date month year) args))))
 
 
 (defvar *-id-counter* 0)
