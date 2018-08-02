@@ -1,10 +1,10 @@
 (defpackage :wamp/session
   (:use :cl)
-  (:import-from :blackbird #:attach #:catcher #:promise #:wait #:chain)
+  (:import-from :blackbird #:create-promise #:attach #:catcher #:promise #:wait #:chain #:all)
   (:import-from :wamp/transport/transport #:transport)
   (:import-from :wamp/transport/websocket #:make-websocket)
   (:import-from :wamp/message-type)
-  (:import-from :wamp/util #:with-timed-promise #:promise-of #:defunx)
+  (:import-from :wamp/util  #:with-timed-promise #:promise-of #:defunx)
   (:import-from :wamp/decorators #:dtype)
   (:export #:session #:make-session
            #:id
@@ -37,24 +37,62 @@
 
 (defstruct registration
   "A struct that stores registration info for a procedure"
-  (uri nil :type string)
+  (uri nil :type string :read-only t)
+  (options nil :type list :read-only t)
   (id 0 :type integer) ;; The id returned by the router
   (procedure nil :type function))
 
 
+(defstruct resolving-info
+  "Helper struct that encapsulates a promise and its resolver"
+  (promise nil :type promise)
+  (resolver nil :type function))
+
+
+(defun create-resolving-info ()
+  (let* ((resolver-capture nil)
+         (promise
+           (create-promise
+            (lambda (resolver rejecter)
+              (declare (ignore rejecter))
+              (setf resolver-capture resolver)))))
+    (make-resolving-info :promise promise :resolver resolver-capture)))
+  
+
 (defclass session ()
-  ((transport :accessor transport :initarg :transport :initarg nil :type transport)
-   (url :reader url :initarg :url :type string)
-   (realm :reader realm :initarg :realm :type string)
-   (id :accessor id :initform 0 :type 'fixnum)
-   (awaiting :reader awaiting-promises :initform (make-hash-table) :type 'hash-table)
-   ;; fname -> registration
-   (registered :reader registered :initform (make-hash-table :test #'equal) :type 'hash-table) 
-   ;; fid -> registration
-   (rpcs :reader rpcs :initform (make-hash-table) :type 'hash-table)
-   (timeout :reader timeout :initform 30 :type 'fixnum)
-   (log-serious-conditions :reader log-serious-conditions :initarg log-serious-conditions :initform t :type 'boolean)
-   (log-output :accessor log-output :initarg log-output :initform *error-output* :type 'stream )))
+  ((transport
+    :documentation "Internal wrapper over the underlying transportation mechanism"
+    :accessor transport :initarg :transport :initarg nil :type transport)
+   (url
+    :documentation "Url fo the target websocket server"
+    :reader url :initarg :url :type string)
+   (realm
+    :documentation "Current realm the session is operating on"
+    :reader realm :initarg :realm :type string)
+   (id
+    :documentation "Id of the session. Determined during session handshake"
+    :accessor id :initform 0 :type 'fixnum)
+   (awaiting
+    :documentation "sxhash(mtype, ?id) -> promise. Used to resolve responses"
+    :reader awaiting-promises :initform (make-hash-table) :type 'hash-table)
+   (resolving-info
+    :documentation "A promise that resolves when the session has been opened"
+    :accessor resolving-info :initform (create-resolving-info) :type '(or resolving-info nil))
+   (registrations
+    :documentation "fname -> registration. On (re)connection all functions will be registered"
+    :reader registrations :initform (make-hash-table :test #'equal) :type 'hash-table)
+   (rpcs
+    :documentation "id -> registration. Used to lookup the registration associated with a given id"
+    :reader rpcs :initform (make-hash-table) :type 'hash-table)
+   (timeout
+    :documentation "Time the session should wait for a server response before timing out"
+    :reader timeout :initform 30 :type 'fixnum)
+   (log-serious-conditions
+    :documentation "When T, propogate serious condition messages on invocation"
+    :reader log-serious-conditions :initarg log-serious-conditions :initform t :type 'boolean)
+   (log-output
+    :documentation "Configurable output stream for error logs"
+    :accessor log-output :initarg log-output :initform *error-output* :type 'stream )))
 
 
 ;; ++ Lifecycle ++
@@ -90,6 +128,7 @@
 
 #[(dtype (session) t)]
 (defun -reconnect (self)
+  (-connect-transport self)
   (start self))
 
 
@@ -99,9 +138,12 @@
    and the basic handshake has been established"
   (-connect-transport self)
   (transport:start (transport self))
-  (catcher 
-   (-handshake self :roles %supported-features)
-   (t (e) (format t "Encountered an error while starting session: ~a~%" e))))
+  (chain (-handshake self :roles %supported-features)
+    (:attach () (-dispatch-registrations self))
+    (:attach ()
+             (funcall (resolving-info-resolver (resolving-info self)))
+             (setf (resolving-info self) nil))
+    (:catcher (e) (format t "Encountered an error while starting session: ~a~%" e))))
 
 
 #[(dtype (session) promise)]
@@ -123,18 +165,17 @@
 
    :MATCH - Specify how to match the passed URI. Either 'prefix' or 'wildcard'
    :INVOKE - Allow multiple registrations. One of 'first', 'last', 'random' 'roundrobin'"
-  (let ((options (-make-options (pairlis '(match invoke) (list match invoke))))
-        (id (-create-message-id))
-        (registration (-register-function self uri procedure)))
-    (chain (-send-await self 'mtype:register (list id options uri))
-      (:attach (message)
-               (format t "adding registration ~a" (cadr message))
-               (setf (registration-id registration) (cadr message))
-               (-add-rpc self registration)
-               registration)
-      (:catcher (e)
-                (format t "Encountered error while registering session: ~a~%" e)
-                (-unregister-function self uri)))))
+  (let* ((options (-make-options (pairlis '(match invoke) (list match invoke))))
+         (registration (-register-function self uri procedure options)))
+    (if (resolving-info self)
+        ;; If the session is not yet started, we simply add the registratoin and return.
+        (wait (resolving-info-promise (resolving-info self)) registration)
+        ;; Otherwise, we create the registration and send it to the router
+        (chain (-dispatch-registration self registration)
+          (:catcher (e)
+                    (debug-print "Encountered error while registering session: ~a~%" e)
+                    (-unregister-function self uri))))))
+
 
 
 #[(dtype (session string &key (:args list) (:kwargs list)) (promise-of (values * *)))]
@@ -145,42 +186,61 @@
             (lambda (result) 
                (destructuring-bind (request-id options &optional args kwargs) result
                  (declare (ignore request-id options))
-                 (values args kwargs)
-                 )))))
+                 (values args kwargs))))))
     
 
 
 ;; ++  Internal ++
 
-#[(dtype (session &key (:roles list)) promise)]
+#[(dtype (session &key (:roles list)) (promise-of session))]
 (defun -handshake (self &key (roles (error "Roles must be specified")))
   "Initiate a handshake with the router. Returns a promise that resolves
    when the handshake has finished"
   (attach (-send-await self 'mtype:hello (list (realm self) (-make-options (pairlis '(roles) (list roles)))))
           (lambda (message)
-            (setf (id self) (car message)))))
+            (setf (id self) (car message))
+            self)))
 
 
-#[(dtype (session string function) registration)]
-(defun -register-function (self uri procedure)
-  (if (gethash uri (registered self))
+#[(dtype (session string function list) registration)]
+(defun -register-function (self uri procedure options)
+  (if (gethash uri (registrations self))
       (error "Unable to register ~a as it is already registered!~%" uri)
-      (setf (gethash uri (registered self))
-            (make-registration :uri uri :procedure procedure))))
+      (setf (gethash uri (registrations self))
+            (make-registration :uri uri :procedure procedure :options options))))
 
 
 #[(dtype (session string) t)]
 (defun -unregister-function (self uri)
-  (let ((did-remove (remhash uri (registered self))))
+  (let ((did-remove (remhash uri (registrations self))))
     (when (not did-remove)
       (error "Unable to unregister ~a as no such procedure exists!~%" uri))
     t))
 
 
+#[(dtype (session registration) (promise-of registration))]
+(defun -dispatch-registration (self registration)
+  (with-slots (options uri) registration
+    (debug-print "Dispatching registration for ~a" (registration-uri registration))
+    (attach (-send-await self 'mtype:register (list (-create-message-id) options uri))
+            (lambda (message)
+              (setf (registration-id registration) (cadr message))
+              (-add-rpc self registration)
+              registration))))
+
+
+#[(dtype (session) promise)]
+(defun -dispatch-registrations (self)
+  "Dispatch all registrations, returning a promise when all registrations have completed"
+  (let ((awaiting (loop for registration being the hash-values of (registrations self)
+                        collect (-dispatch-registration self registration))))
+    (all awaiting)))
+
+
 #[(dtype (session registration) t)]
 (defun -add-rpc (self registration)
   (if (gethash (registration-id registration) (rpcs self))
-      (error "Unable to set RPC for ~a as such an RPC entry already exists!~%" registration) 
+       (error "Unable to set RPC for ~a as such an RPC entry already exists!~%" registration) 
       (setf (gethash (registration-id registration) (rpcs self)) registration)))
 
 
@@ -197,7 +257,7 @@
   "Encodes an association list as an assoc (removing nulls) or empty object."
   (if (and (listp assoc) (some #'(lambda (pair) (cdr pair)) assoc))
       (remove-if-not #'cdr assoc)
-      %empty-options))
+      nil))
 
 
 #[(dtype (session mtype:message-t list) null)]
@@ -344,10 +404,11 @@
 
 (defun test ()
   (setf *session* (make-session "ws://138.68.246.180:8080/ws" "realm1"))
-   (start *session*))
+  (register *session* "com.app.tfun3" #'tfun3 :invoke "random")
+  (start *session*))
 
 
-;(register *session* "com.app.tfun3" #'tfun3 :invoke "random")))
+;))
 
 
 #[(dtype () fixnum)]
