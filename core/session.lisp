@@ -14,15 +14,6 @@
 
 (in-package :wamp/session)
 
-(defconstant %DEBUG_PRINT% t)
-
-(defmacro debug-print (control &rest args)
-  (when %DEBUG_PRINT%
-    `(progn
-       (format t "wamp/session:")
-       (funcall #'format ,@(cons t (cons control args)))
-       (format t "~%"))))
-
 
 (deftype match-t () '(member "prefix" "wildcard" :test #'string-equal))
 (deftype invoke-t () '(member "first" "last" "roundrobin" "random" :test #'string-equal))
@@ -89,20 +80,27 @@
     :reader timeout :initform 30 :type 'fixnum)
    (log-serious-conditions
     :documentation "When T, propogate serious condition messages on invocation"
-    :reader log-serious-conditions :initarg log-serious-conditions :initform t :type 'boolean)
+    :reader log-serious-conditions :initarg :log-serious-conditions :initform t :type 'boolean)
    (log-output
     :documentation "Configurable output stream for error logs"
-    :accessor log-output :initarg log-output :initform *error-output* :type 'stream )))
+    :accessor log-output :initarg :log-output :type 'stream )
+   (log-verbose-p
+    :documentation "Whether to log debugging information"
+    :accessor log-verbose-p :initarg :log-verbose-p :type 'boolean)))
 
 
 ;; ++ Lifecycle ++
 
-#[(dtype (string string) session)]
-(defun make-session (url realm)
+#[(dtype (string string &key (:log-output stream) (:log-serious-conditions boolean) (:log-verbose boolean)) session)]
+(defun make-session (url realm
+                     &key (log-output *error-output*) (log-serious-conditions t) (log-verbose nil))
   "Makes a new session instance for the given URL and REALM. A session represents the 
    communication channel between a wamp client and router. While WAMP technically allows 
    for multiple transportation types only websockets are currently supported"
-  (make-instance 'session :url url :realm realm))
+  (make-instance 'session :url url :realm realm
+                          :log-output log-output
+                          :log-serious-conditions log-serious-conditions
+                          :log-verbose-p log-verbose))
 
 
 ;; CODE should always be a fixnum, but the underlying websocket lib we are using returns
@@ -126,7 +124,8 @@
 
 #[(dtype (session) t)]
 (defun -reconnect (self)
-  (-connect-transport self)
+  (-log self "Lost connection to ~a. Attempting to reconnect" (realm self))
+  (setf (resolving-info self) (create-resolving-info))
   (start self))
 
 
@@ -134,13 +133,14 @@
 (defun start (self)
   "Opens the session SELF. Returns a promise that resolves when the socket has opened
    and the basic handshake has been established"
-  (-connect-transport self)
   (clrhash (rpcs self))
   (clrhash (awaiting-promises self))
-  
+  (-connect-transport self)
   (transport:start (transport self))
   (chain (-handshake self :roles %supported-features)
-    (:attach () (-dispatch-registrations self))
+    (:attach ()
+             (-log self "Started session on ~a" (realm self))
+             (-dispatch-registrations self))
     (:attach ()
              (and (resolving-info self)
                   (funcall (resolving-info-resolver (resolving-info self))))
@@ -154,6 +154,7 @@
    and the corresponding GOODBYE message has been recieved"
   (catcher 
    (wait (-send-await self 'mtype:goodbye (list %empty-options "wamp.close.system_shutdown"))
+     (-log self "Terminating session on ~a" (realm self))
      (transport:stop (transport self)))
    (t (e) (-log self "Encountered an error while shutting down session session: ~a~%" e))))
 
@@ -169,15 +170,37 @@
    :INVOKE - Allow multiple registrations. One of 'first', 'last', 'random' 'roundrobin'"
   (let* ((options (-make-options (pairlis '(match invoke) (list match invoke))))
          (registration (-register-function self uri procedure options)))
+    (-log self "Registering function ~a" (registration-uri registration))
     (if (resolving-info self)
         ;; If the session is not yet started, we simply add the registration and return.
         (wait (resolving-info-promise (resolving-info self)) registration)
         ;; Otherwise, we create the registration and send it to the router
         (chain (-dispatch-registration self registration)
           (:catcher (e)
-                    (debug-print "Encountered error while registering session: ~a~%" e)
-                    (-unregister-function self uri))))))
+                    (-log self "Encountered error while registering session: ~a~%" e)
+                    (remhash (registration-uri registration) (registrations self)))))))
 
+
+#[(dtype (session registration) (promise-of null))]
+(defun unregister (self registration)
+  (if (resolving-info self)
+      ;; Wait for any reconnection to complete
+      (wait (resolving-info self)
+        (-unregister-function self registration))
+      (-unregister-function self registration)))
+
+
+#[(dtype (session registration) (promise-of null))]
+(defun -unregister-function (self registration)
+  (remhash (registration-uri registration) (registrations self))
+  (remhash (registration-id registration) (registrations self))
+  (chain (-send-await self 'mtype:unregister (list (-create-message-id) (registration-id registration)))
+    (:attach ()
+             (-log self "Successfully unregistered function: ~a" (registration-uri registration))
+             nil)
+    (:catcher (e)
+              (-log self "Encountered error while unregistering session: ~a~%" e))))
+  
 
 
 #[(dtype (session string &key (:args list) (:kwargs list)) (promise-of (values * *)))]
@@ -212,21 +235,13 @@
             (make-registration :uri uri :procedure procedure :options options))))
 
 
-#[(dtype (session string) t)]
-(defun -unregister-function (self uri)
-  (let ((did-remove (remhash uri (registrations self))))
-    (when (not did-remove)
-      (error "Unable to unregister ~a as no such procedure exists!~%" uri))
-    t))
-
-
 #[(dtype (session registration) (promise-of registration))]
 (defun -dispatch-registration (self registration)
   (with-slots (options uri) registration
-    (debug-print "Dispatching registration for ~a" (registration-uri registration))
     (attach (-send-await self 'mtype:register (list (-create-message-id) options uri))
             (lambda (message)
               (setf (registration-id registration) (cadr message))
+              (-log self "Registered ~a as id ~a" (registration-uri registration) (registration-id registration))
               (-add-rpc self registration)
               registration))))
 
@@ -265,6 +280,7 @@
 #[(dtype (session mtype:message-t list) null)]
 (defun -send (self type args)
   "Sends a message of TYPE with ARGS"
+  (-log-verbose self "Debug: Sending message: type: ~a args: ~a" type args)
   (transport:send (transport self) (cons type args))
   nil)
 
@@ -272,7 +288,8 @@
 #[(dtype (session mtype:message-t list) promise)]
 (defun -send-await (self type args)
   "Send a message of a given TYPE with ARGS, awaiting a message of AWAIT-TYPE. 
-   Returns a promise yielding the resulting message" 
+   Returns a promise yielding the resulting message"
+  (-log-verbose self "Debug: Sending message: type: ~a args: ~a" type args)
   (with-timed-promise (timeout self) (resolve reject :resolve-fn resolver :reject-fn rejector)
     ;; Add the promise to the awaiting map. Resolved if a match
     ;; is found in session-handle-message
@@ -320,20 +337,20 @@
 
 #[(dtype (session mtype:message-t list) *)]
 (defun -handle-message (self type args)
-  (debug-print "handling message: type: ~a args: ~a~%" type args)
+  (-log-verbose self "Debug: Handling message: type: ~a args: ~a" type args)
   (cond ((eq 'mtype:invocation type) (-handle-invokation self args))
         ((-response-without-id-p type) (-resolve-awaiting self (mtype:to-num type) args))
         ((-response-with-id-p type) (-resolve-awaiting self (sxhash (cons (mtype:to-num type) (car args))) args))
         ((eq 'mtype:error type) (-reject-awaiting self args))
-        
-        (t (error "Unable to handle unknown message type ~a~%" type))))
+        (t (-log self "Error: Unable to handle unknown message type ~a" type))))
 
 
 #[(dtype (session integer list) null)]
 (defun -resolve-awaiting (self hash args)
   (let ((awaiting-promise (gethash hash (awaiting-promises self))))
     (when (null awaiting-promise)
-      (error "Recieved a message for which a corresponding resolver does not exist~%"))
+      (-log self "Error: Recieved a message for which a corresponding resolver does not exist")
+      (return-from -resolve-awaiting))
     (funcall (car awaiting-promise) args)
     (remhash hash (awaiting-promises self))
     nil))
@@ -345,7 +362,8 @@
          (hash (-lookup-response-hash (mtype:code-to-message-t rejected-type) (cdr args)))
          (awaiting-promise (gethash hash (awaiting-promises self))))
     (when (null awaiting-promise)
-      (error "Recieved a message for which a corresponding rejector does not exist~%"))
+        (-log self "Error: Recieved a message for which a corresponding rejector does not exist")
+        (return-from -reject-awaiting))
     (funcall (cadr awaiting-promise) args)
     (remhash hash (awaiting-promises self))
     nil))
@@ -370,14 +388,14 @@
   (handler-case (-call-local-rpc self message)
     ;; Likely indicates an error in how the function was called
     ((or type-error #+sbcl sb-int:simple-program-error) (e)
-      (-log self "A TYPE-ERROR error during function invocation: ~a~%" e)
+      (-log self "Error: A TYPE-ERROR error during function invocation: ~a" e)
       (-send self 'mtype:error (list (mtype:to-num 'mtype:invocation)
                                      (car message) %empty-options "wamp.error.invalid_argument" nil
                                      `((details . ,(format nil "~a" e))))))
 
     ;; A fatal error or serious condition has occured. Returning a detailed error message is configurable
     (serious-condition (e)
-      (-log self "A SERIOUS-CONDITION occured during function invocation: ~a~%" e)
+      (-log self "Error: A SERIOUS-CONDITION occured during function invocation: ~a" e)
       (let* ((base-args (list (mtype:to-num 'mtype:invocation)
                               (car message) %empty-options "cl.wamp.error.serious_condition"))
              (all-args (if (log-serious-conditions self)
@@ -386,12 +404,19 @@
         (-send self 'mtype:error all-args)))))
 
 
-#[(dtype (session string &rest *) *)]
+#[(dtype (session string &rest *) null)]
 (defun -log (self control-string &rest args)
   (multiple-value-bind (second minute hour date month year) (get-decoded-time) 
     (apply #'format (log-output self)
-           (concatenate 'string "~a:~a:~a ~a/~a/~a (UTC) WAMP Error: " control-string)
-           (append (list hour minute second date month year) args))))
+           (concatenate 'string "~a:~a:~a ~a/~a/~a (UTC) cl-wamp: " control-string "~%")
+           (append (list hour minute second date month year) args)))
+  nil)
+
+
+#[(dtype (session string &rest *) null)]
+(defun -log-verbose (self control-string &rest args)
+  (when (log-verbose-p self)
+    (apply #'-log (append (list self control-string) args))))
 
 
 (defvar *-id-counter* 0)
@@ -406,13 +431,9 @@
 (defvar *session*)
 
 (defun test ()
-  (setf *session* (make-session "ws://138.68.246.180:8080/ws" "realm1"))
+  (setf *session* (make-session "ws://138.68.246.180:8080/ws" "realm1" :log-verbose t :log-serious-conditions t))
   (register *session* "com.app.tfun3" #'tfun3 :invoke "random")
-  (start *session*)
-  )
-
-
-;))
+  (start *session*))
 
 
 #[(dtype () fixnum)]

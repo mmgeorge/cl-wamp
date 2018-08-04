@@ -12,7 +12,7 @@
 
 
 
-(defconstant %DEBUG_PRINT% t)
+(defconstant %DEBUG_PRINT% nil)
 
 (defmacro debug-print (control &rest args)
   (when %DEBUG_PRINT%

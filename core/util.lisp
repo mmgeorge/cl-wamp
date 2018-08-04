@@ -31,7 +31,7 @@
 
 
 (deftype promise-of (type)
-  (let ((predicate (gentemp)))
+  (let ((predicate (gensym)))
     (setf (symbol-function predicate)
           #'(lambda (object) (promise-of-type-p object type)))
     `(and bb:promise (satisfies ,predicate))))

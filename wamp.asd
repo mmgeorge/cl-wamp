@@ -4,8 +4,7 @@
 (asdf:defsystem "wamp"
   :class :package-inferred-system
   :pathname "core"
-  :depends-on ("wamp/session"
-               "wamp/connection")
+  :depends-on ("wamp/session")
   :in-order-to ((asdf:test-op (asdf:test-op "wamp/test"))))
 
 
