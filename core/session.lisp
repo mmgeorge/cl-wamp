@@ -102,9 +102,7 @@
   "Makes a new session instance for the given URL and REALM. A session represents the 
    communication channel between a wamp client and router. While WAMP technically allows 
    for multiple transportation types only websockets are currently supported"
-  (let* ((session (make-instance 'session :url url :realm realm)))
-    (-connect-transport session)
-    session))
+  (make-instance 'session :url url :realm realm))
 
 
 ;; CODE should always be a fixnum, but the underlying websocket lib we are using returns
@@ -137,13 +135,17 @@
   "Opens the session SELF. Returns a promise that resolves when the socket has opened
    and the basic handshake has been established"
   (-connect-transport self)
+  (clrhash (rpcs self))
+  (clrhash (awaiting-promises self))
+  
   (transport:start (transport self))
   (chain (-handshake self :roles %supported-features)
     (:attach () (-dispatch-registrations self))
     (:attach ()
-             (funcall (resolving-info-resolver (resolving-info self)))
+             (and (resolving-info self)
+                  (funcall (resolving-info-resolver (resolving-info self))))
              (setf (resolving-info self) nil))
-    (:catcher (e) (format t "Encountered an error while starting session: ~a~%" e))))
+    (:catcher (e) (-log self "Encountered an error while starting session: ~a~%" e))))
 
 
 #[(dtype (session) promise)]
@@ -153,7 +155,7 @@
   (catcher 
    (wait (-send-await self 'mtype:goodbye (list %empty-options "wamp.close.system_shutdown"))
      (transport:stop (transport self)))
-   (t (e) (format t "Encountered an error while shutting down session session: ~a~%" e))))
+   (t (e) (-log self "Encountered an error while shutting down session session: ~a~%" e))))
 
 
 ;; ++ WAMP Procedures ++
@@ -168,7 +170,7 @@
   (let* ((options (-make-options (pairlis '(match invoke) (list match invoke))))
          (registration (-register-function self uri procedure options)))
     (if (resolving-info self)
-        ;; If the session is not yet started, we simply add the registratoin and return.
+        ;; If the session is not yet started, we simply add the registration and return.
         (wait (resolving-info-promise (resolving-info self)) registration)
         ;; Otherwise, we create the registration and send it to the router
         (chain (-dispatch-registration self registration)
@@ -400,12 +402,14 @@
   (+ a b))
 
 
+
 (defvar *session*)
 
 (defun test ()
   (setf *session* (make-session "ws://138.68.246.180:8080/ws" "realm1"))
   (register *session* "com.app.tfun3" #'tfun3 :invoke "random")
-  (start *session*))
+  (start *session*)
+  )
 
 
 ;))
