@@ -11,6 +11,6 @@ before_install:
   - sbcl --load install.lisp --non-interactive
 
 install:
-  - echo "(push (sb-posix:getcwd) asdf:*central-registry*)" >> $HOME/.sbclrc
+  - echo "(push (concatenate 'string (sb-posix:getcwd) \"/\") asdf:*central-registry*)" >> $HOME/.sbclrc
   - sbcl --non-interactive --eval '(ql:quickload "wamp/test")' 
   
