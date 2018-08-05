@@ -11,5 +11,5 @@ before_install:
   - sbcl --load install.lisp --non-interactive
 
 install:
-  - sbcl --eval '(ql:quickload "wamp/test")(exit)' 
+  - sbcl --non-interactive --eval '(ql:quickload "wamp/test")' 
   
