@@ -1,5 +1,6 @@
 
 (defvar *ql-path* (merge-pathnames (user-homedir-pathname) "quicklisp"))
+(format t "QL-PATH ~a" *ql-path*)
 
 (if (not (probe-file *ql-path*))
     ;; Install quicklisp if it does not exist
