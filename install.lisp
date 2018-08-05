@@ -1,14 +1,13 @@
 
-;; Setup quicklisp
-(load "quicklisp.lisp")
-(quicklisp-quickstart:install)
+(defvar *ql-path* (merge-pathnames (user-homedir-pathname) "quicklisp"))
+
+(if (not (probe-file *ql-path*))
+    ;; Install quicklisp if it does not exist
+    (progn
+      (load "quicklisp.lisp")
+      (quicklisp-quickstart:install))
+    ;; Otherwise load the setup file
+    (load (merge-pathnames *ql-path* "setup.lisp")))
+
 (ql-util:without-prompting
   (ql:add-to-init-file))
-
-;; Add current directory
-(format t "Adding current directory to asdf ~a" (sb-posix:getcwd))
-(push (sb-posix:getcwd) asdf:*central-registry*)
-
-(format t "Adding current directory to asdf ~a" asdf:*central-registry*)
-
-
