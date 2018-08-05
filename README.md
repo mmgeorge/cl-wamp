@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/mmgeorge/cl-wamp.svg?branch=master)](https://travis-ci.org/mmgeorge/cl-wamp)
+
 # cl-wamp
 A [WAMP](https://wamp-proto.org/) client for Common Lisp applications. Currently supports the basic client profile for RPC (pub-sub support is planned but not yet implemented). 
 
