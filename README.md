@@ -31,7 +31,9 @@ Using the `wait` method of the `blackbird` promise library, let wait for the `se
 ```cl
 (wait (session:open *session*)
   (attach (session:call *session* "com.myapp.myadd" :args '(1 2))
-     (lambda (args kwargs) (format t "Got! ~a" result)))) ;; -> Got! 3
+     (lambda (args kwargs)
+       (declare (ignore kwargs))
+       (format t "Got! ~a" args)))) ;; -> Got! 3
   
 ```
 
