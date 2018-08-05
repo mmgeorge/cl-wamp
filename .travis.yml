@@ -9,7 +9,7 @@ before_install:
   - sudo apt-get install sbcl -y
   - curl -O https://beta.quicklisp.org/quicklisp.lisp
   - sbcl --load install.lisp --non-interactive
-  - git clone https://github.com/asdf-vm/asdf.git $HOME/common-lisp/asdf
+  - git clone https://github.com/fare/asdf.git $HOME/common-lisp/asdf
   - echo | sbcl --version
 
 install:
