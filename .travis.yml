@@ -22,6 +22,8 @@ install:
 jobs: 
   include:
     - stage: test
+      name: "wamp/test/session"
       script: sbcl --non-interactive --eval '(asdf:test-system "wamp")'
-    - stage: test2
-      script: sbcl --non-interactive --eval '(asdf:test-system "wamp")'
+      language: lisp
+    - script: sbcl --non-interactive --eval '(asdf:test-system "wamp")'
+      name: "wamp/test/transport"
