@@ -8,6 +8,6 @@ before_install:
   - sudo apt-get update
   - sudo apt-get install sbcl -y
   - curl -O https://beta.quicklisp.org/quicklisp.lisp
-  - echo -ne '\n' | sbcl --load install.lisp --non-interactive
+  - sbcl --load install.lisp --non-interactive
   
   
