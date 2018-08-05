@@ -22,4 +22,4 @@ install:
 jobs: 
   include:
     - stage test
-    - sbcl --non-interactive --eval '(asdf:test-system "wamp")'
+    - script: sbcl --non-interactive --eval '(asdf:test-system "wamp")'
