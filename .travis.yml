@@ -9,5 +9,7 @@ before_install:
   - sudo apt-get install sbcl -y
   - curl -O https://beta.quicklisp.org/quicklisp.lisp
   - sbcl --load install.lisp --non-interactive
-  
+
+install:
+  - sbcl --eval '(ql:quickload "wamp/test")(exit)' 
   
