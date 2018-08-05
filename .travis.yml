@@ -1,6 +1,9 @@
 language: common-lisp
 sudo: required
-
+cache:
+  directories:
+    - $HOME/quicklisp
+  
 os:
   - linux
 
