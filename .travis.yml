@@ -13,6 +13,11 @@ before_install:
   - echo | sbcl --version
 
 install:
+  # Add the current working directory to the asdf repository list
   - echo "(push (concatenate 'string (sb-posix:getcwd) \"/\") asdf:*central-registry*)" >> $HOME/.sbclrc
-  - sbcl --non-interactive --eval '(ql:quickload "wamp")' 
-  
+  # Install dependencies
+  - sbcl --non-interactive --eval '(ql:quickload "wamp")'
+  - sbcl --non-interactive --eval '(ql:quickload "wamp/test")'
+
+script:
+  - sbcl --non-interactive --eval '(asdf:test-system "wamp")'
