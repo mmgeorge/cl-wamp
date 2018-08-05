@@ -12,5 +12,5 @@ before_install:
 
 install:
   - echo "(push (concatenate 'string (sb-posix:getcwd) \"/\") asdf:*central-registry*)" >> $HOME/.sbclrc
-  - sbcl --non-interactive --eval '(ql:quickload "wamp/test")' 
+  - sbcl --non-interactive --eval '(ql:quickload "wamp")' 
   
