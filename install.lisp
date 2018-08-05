@@ -6,6 +6,7 @@
 
 (handler-case (quicklisp-quickstart:install)
   (t (e)
+    (declare (ignore e))
     (load (merge-pathnames *ql-path* "setup.lisp"))))
 
 
