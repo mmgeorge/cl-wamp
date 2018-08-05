@@ -203,14 +203,14 @@
   
 
 
-#[(dtype (session string &key (:args list) (:kwargs list)) (promise-of (values * *)))]
+#[(dtype (session string &key (:args list) (:kwargs list)) promise)]
 (defun call (self uri &key args kwargs)
   (let ((options %empty-options)
         (id (-create-message-id)))
     (attach (-send-await self 'mtype:call (remove nil (list id options uri args kwargs)))
-            (lambda (result) 
-               (destructuring-bind (request-id options &optional args kwargs) result
-                 (declare (ignore request-id options))
+            (lambda (result)
+              (destructuring-bind (request-id options &optional args kwargs) result
+                (declare (ignore request-id options))
                  (values args kwargs))))))
     
 
