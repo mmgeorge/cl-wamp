@@ -1,8 +1,8 @@
+(load (merge-pathnames (user-homedir-pathname) "quicklisp.lisp"))
 
 (defvar *ql-path* (merge-pathnames (user-homedir-pathname) "quicklisp"))
 (format t "QL-PATH ~a" *ql-path*)
 
-(load "quicklisp.lisp")
 
 (handler-case (quicklisp-quickstart:install)
   (t (e)
