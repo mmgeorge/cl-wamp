@@ -9,7 +9,6 @@
   (:export #:session #:make-session
            #:id
            #:start
-
            #:timeout-exceeded))
 
 (in-package :wamp/session)
