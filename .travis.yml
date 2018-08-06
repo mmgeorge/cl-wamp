@@ -27,4 +27,4 @@ jobs:
   include:
     - stage: test
       name: "Unit"
-      script: sbcl --non-interactive --eval '(asdf:test-system "wamp")' | tee >(echo && exit 1)
+      script: sbcl --non-interactive --load 'test-system.lisp'
