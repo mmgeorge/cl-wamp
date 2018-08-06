@@ -4,5 +4,5 @@
   (let ((output (get-output-stream-string *standard-output*)))
     (format t "~a" output)
     (if (search "failed" output)
-        (format t "It failed!")
-        (format t "It worked!"))
+        (error "It failed!")
+        (format t "It worked!"))))
