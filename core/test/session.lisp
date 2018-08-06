@@ -13,6 +13,7 @@
 
 (deftest session-open-test 
   (testing "handshake sets session id"
-    (let* ((session (make-session *server* "realm1"))
+    (let* ((session (make-session *server* "realm1" :log-output (make-broadcast-stream)))
            (is-open (start session)))
-      (attach is-open (lambda (x) (ok (not (equal (id session) 0))))))))
+      (loop while (not (promise-finished-p is-open)) do (sleep 0.1))
+      (ok (not (equal (id session) 0))))))
