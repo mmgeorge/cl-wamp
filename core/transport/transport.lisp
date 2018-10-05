@@ -4,7 +4,6 @@
   (:import-from :wamp/message-type)
   (:import-from :websocket-driver)
   (:import-from :cl-json)
-  (:import-from :parachute)
   (:export #:transport #:make-websocket
            #:start #:stop #:send #:mock
            #:on-open #:on-close #:on-message #:on-error

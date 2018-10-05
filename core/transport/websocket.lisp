@@ -6,13 +6,13 @@
   (:import-from :wamp/message-type)
   (:import-from :wamp/transport/transport #:transport)
   (:import-from :wamp/decorators #:dtype)
-  (:export #:websocket #:make-websocket))
+  (:export #:websocket #:make-websocket #:websocket-client))
 
 (in-package :wamp/transport/websocket)
 
 
 
-(defconstant %DEBUG_PRINT% nil)
+(defconstant %DEBUG_PRINT% t)
 
 (defmacro debug-print (control &rest args)
   (when %DEBUG_PRINT%
@@ -43,10 +43,17 @@
                                                   :on-message on-message
                                                   :on-error on-error))
               (client (wsd:make-client url :accept-protocols '("wamp.2.json"))))
-         (wsd:on :open client (lambda () (funcall (transport:on-open instance))))
-         (wsd:on :error client (lambda (error) (funcall (transport:on-error error))))
-         (wsd:on :message client (lambda (message) (-transport-handle-message instance message)))
+         (wsd:on :open client (lambda ()
+                                (debug-print "open: Transport calling open")
+                                (funcall (transport:on-open instance))))
+         (wsd:on :error client (lambda (error)
+                                 (debug-print "error: Transport calling error")
+                                 (funcall (transport:on-error error))))
+         (wsd:on :message client (lambda (message)
+                                   (debug-print "msg: Transport calling message")
+                                   (-transport-handle-message instance message)))
          (wsd:on :close client  (lambda (&key code reason)
+                                  (debug-print "close: Transport calling close")
                                   (-handle-close :code code :reason reason)
                                   (funcall (transport:on-close instance) :code code :reason reason)))
          (setf (websocket-client instance) client)
@@ -85,12 +92,14 @@
 
 
 (defmethod transport:serialize ((self websocket) (message list))
+  (debug-print "serialize: got message ~a" message)
   (the (values string &optional)
        (progn (rplaca message (wamp/message-type:message-t-to-code (car message)))
               (json:encode-json-to-string message))))
 
 
 (defmethod transport:deserialize ((self websocket) (message string))
+  (debug-print "deserialize: got message ~a" message)
   (the list
        (let ((parsed (json:decode-json-from-string message)))
          (check-type parsed list "a well-formed wamp-message")

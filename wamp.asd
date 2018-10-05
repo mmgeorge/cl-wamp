@@ -3,7 +3,8 @@
 (asdf:defsystem "wamp"
   :class :package-inferred-system
   :pathname "core"
-  :depends-on ("wamp/session")
+  :depends-on ("wamp/session"
+               "wamp/transport/websocket")
   :in-order-to ((asdf:test-op (asdf:test-op "wamp/test"))))
 
 
@@ -18,10 +19,4 @@
 ;;(asdf:register-system-packages :cl-async '(:cl-async))
 (asdf:register-system-packages :blackbird '(:blackbird))
 (asdf:register-system-packages :lparallel '(:lparallel))
-(asdf:register-system-packages :rove '(:rove))
-(asdf:register-system-packages :websocket-driver '(:websocket-driver))
 (asdf:register-system-packages :cl-json '(:cl-json))
-
-
-;; TODO - We modify the read table -- can we store the old version after
-;; compiling?
