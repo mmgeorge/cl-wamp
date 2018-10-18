@@ -4,7 +4,8 @@
   :class :package-inferred-system
   :pathname "core"
   :depends-on ("wamp/session"
-               "wamp/transport/websocket")
+               "wamp/transport/websocket"
+               "wamp/ws/server")
   :in-order-to ((asdf:test-op (asdf:test-op "wamp/test"))))
 
 

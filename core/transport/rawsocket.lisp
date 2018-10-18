@@ -50,7 +50,8 @@
 
 (defun create-socket (self addr port)
   (let* ((sock (usocket:socket-connect addr port :element-type '(unsigned-byte 8)))
-         (stream (usocket:socket-stream sock)))
+         (stream (usocket:socket-stream sock))
+         (debug-stream *standard-output*))
     (handler-case 
         (progn
           (debug-print "starting socket")
@@ -59,7 +60,7 @@
           (usocket:wait-for-input sock)
           (debug-print "Got response")
           (setf (server-max-len self) (read-requested-length stream :expected-serializer :json))
-          (setf (thread self) (bt:make-thread (lambda () (poll self stream)))))
+          (setf (thread self) (bt:make-thread (lambda () (poll self stream debug-stream)))))
       (t (e)
         (format t "Encountered error in opening socket ~a" e)
         (usocket:socket-close sock)
@@ -102,13 +103,17 @@
 
 ;; ++ Internal ++
 
-(defun poll (self stream)
+(defun poll (self stream out-stream)
   (unwind-protect
        (loop
-         (multiple-value-bind (type message) (read-frame stream)
-           (case type
-             (:message (-handle-message self message))
-             (t (error "unknown stuff")))))
+         (if (listen stream)
+             (multiple-value-bind (type message) (read-frame stream out-stream)
+               (case type
+                 (:message (-handle-message self message))
+                 (t (error "unknown stuff"))))
+             (format out-stream "nothing to read...~%"))
+           (sleep 3)
+           )
     (usocket:socket-close (socket self))))
 
 
@@ -191,10 +196,14 @@
     (t (error "Unknown transport type"))))
 
 
-(defun read-transport-type (stream)
-  (to-transport-type
-   (ldb (byte 3 0)
-        (read-byte stream nil nil))))
+(defun read-transport-type (stream debug-stream)
+  (let ((out (to-transport-type
+              (ldb (byte 3 0)
+                   (read-byte stream nil nil)))))
+  
+    (format debug-stream "Got transport-type ~a" out )
+    out
+  ))
 
 
 (defun write-transport-type (stream type)
@@ -209,7 +218,6 @@
 
 
 (defun read-frame-length (stream)
-  (debug-print "Reading frame...")
   (let ((out 0))
     (setf (ldb (byte 8 16) out) (read-byte stream nil nil))
     (setf (ldb (byte 8 8) out) (read-byte stream nil nil))
@@ -234,8 +242,9 @@
             (read-byte stream nil nil)))))
 
 
-(defun read-frame (stream)
-  (let* ((type (read-transport-type stream))
+(defun read-frame (stream debug-stream)
+  (format debug-stream "reading-frame")
+  (let* ((type (read-transport-type stream debug-stream))
          (body (case type
                  (:message (read-message stream))
                  (:ping (read-ping stream))

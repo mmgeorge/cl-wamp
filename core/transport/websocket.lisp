@@ -11,7 +11,6 @@
 (in-package :wamp/transport/websocket)
 
 
-
 (defconstant %DEBUG_PRINT% t)
 
 (defmacro debug-print (control &rest args)

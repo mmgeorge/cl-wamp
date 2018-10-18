@@ -442,7 +442,7 @@
 
 (defun test ()
   ;;(setf *session* (make-session "ws://138.68.246.180:8080/ws" "realm1" :log-verbose t :log-serious-conditions t))
-  (setf *session* (make-session "138.68.246.180" 8081 "realm1" :log-verbose t :log-serious-conditions t))
+  (setf *session* (make-session "services.owny.io" 8081 "realm1" :log-verbose t :log-serious-conditions t))
   (register *session* "com.app.tfun3" #'tfun3 :invoke "random" :disclose_me t)
   (start *session*))
 ;;(call *session* "com.app.tfun3" :args '(1 2))
