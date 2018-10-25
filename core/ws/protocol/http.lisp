@@ -8,6 +8,16 @@
 (in-package :wamp/ws/protocol/http)
 
 
+(define-condition http-error (error)
+  ((text :initarg :text :reader text)
+   (client :initarg :client :reader client))
+  (:report (lambda (condition stream)
+             (format stream "[~{~a~^.~}:~a] http error: ~a~%"
+                     (coerce (usocket:get-peer-address (client condition)) 'list)
+                     (usocket:get-peer-port (client condition))
+                     (text condition)))))
+
+
 (defclass http (protocol:protocol)
   ((buffer :accessor buffer :initform (make-array 1024 :element-type '(unsigned-byte 8)))
    (request :initform nil)
@@ -36,14 +46,19 @@
 
 
 (defmethod protocol:recieve ((self http) stream)
-  (with-accessors ((buffer buffer) (request request) (parser parser)) self
-    (let ((length (buffered-read stream buffer 0)))
-
-      (funcall parser buffer :end length)
-      (format t "~a~%" (request self))
-      (format t "HEAD: ~a ~%~% " (fast-http:http-headers (request self)))
-      (and (recieved-p self)
-           (yield-request self)))))
+  ;(when (listen stream)
+  ;;(setf (flexi-streams:flexi-stream-external-format stream) )
+  ;(handler-case
+      (with-accessors ((buffer buffer) (request request) (parser parser)) self
+        (let ((length (buffered-read stream buffer 0)))
+          (format t "GOT LENGTH OF ~a buf ~a" length buffer)
+          (funcall parser buffer :end length)
+          (format t "~a~%" (request self))
+          (format t "HEAD: ~a ~%~% " (fast-http:http-headers (request self)))
+          (and (recieved-p self)
+               (yield-request self))))
+    ;(t () nil ))
+    )
 
 
 (defun yield-request (self )
@@ -56,7 +71,7 @@
 (defun buffered-read (stream buffer start)
   (loop while (listen stream)
         for i from start to (length buffer)
-        for byte = (read-byte stream nil nil)
+        for byte =  (read-byte stream nil nil)
         do (setf (aref buffer i) byte)
         finally (return (1+ i))))
 

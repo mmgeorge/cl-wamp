@@ -3,15 +3,19 @@
   (:import-from :usocket)
   (:import-from :bordeaux-threads)
   (:import-from :fast-http)
+  (:import-from :ironclad)
+  (:import-from :cl-base64)
   (:import-from :wamp/ws/client)
   (:import-from :wamp/ws/protocol/http)
+  (:import-from :wamp/ws/protocol/websocket)
   (:local-nicknames (:client :wamp/ws/client)
-                    (:protocol/http :wamp/ws/protocol/http))
+                    (:protocol/http :wamp/ws/protocol/http)
+                    (:protocol/websocket :wamp/ws/protocol/websocket))
   (:export #:server))
 
 (in-package :wamp/ws/server)
 
-
+(defparameter %accept-key "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 
 (defvar *log-output* *standard-output*)
 
@@ -28,9 +32,21 @@
 
 
 
+(define-condition auth-error (error)
+  ((text :initarg :text :reader text)
+   (client :initarg :client :reader client))
+  (:report (lambda (condition stream)
+             (format stream "[~{~a~^.~}:~a] Authorization error: ~a~%"
+                     (coerce (usocket:get-peer-address (client condition)) 'list)
+                     (usocket:get-peer-port (client condition))
+                     (text condition)))))
+
+
 (defclass server ()
   ((host :reader host :type 'string :initarg :host)
    (port :reader port :type 'fixnum :initarg :port)
+   (path :reader path :type 'string :initarg :path)
+   (origins :reader origins :type 'list :initarg :origins)
    (authority :accessor authority :type 'string :initarg :authority)
    ;; First socket denotes the master/acceptor socket
    (sockets :accessor sockets :initform nil)
@@ -38,8 +54,13 @@
    ))
 
 
-(defun make-server (host port &optional (authority nil))
-  (make-instance 'server :host host :port port :authority authority ))
+(defun make-server (url &key (host nil) (origins nil))
+  (let ((uri (uri url)))
+    (make-instance 'server :host (uri-host uri)
+                           :port (uri-port uri)
+                           :path (uri-path uri)
+                           :origins origins
+                           :authority host )))
 
 
 ;; Methods 
@@ -111,7 +132,7 @@
 
 (defun handle-client (self client)
   (when-let ((data (client:recieve client)))
-
+    (format t "GOT A MESSAGE .... HANDLING IT~%")
     (handle-message self client data)))
 
 
@@ -129,11 +150,37 @@
 
 
 
-(defun process-handshake (self client data)
-  (setf *res* data)
-  (validate-handshake self client data)
-  ;(error 'protocol-error :text "YES IT IS BAD" :client *client*)
-  )
+(defun process-handshake (self client request)
+  (let ((headers (http-headers request)))
+    (when (and (check-protocol self client request headers)
+               (check-auth self client request headers))
+      (send-handshake client headers)
+      (setf (client:protocol client) (protocol/websocket:make-websocket))
+      )))
+
+
+(defun send-handshake (client headers)
+  (let* ((stream (client:socket-stream client))
+        ;(protocols (gethash "sec-websocket-protocol" headers))
+        ;(extensions (gethash "sec-websocket-extensions" headers))
+        (nonce (gethash "sec-websocket-key" headers))
+        (key (concatenate 'string nonce %accept-key))
+         )
+
+    ;; use flexi stream here? 
+    
+    (format stream "HTTP/1.1 101 Switching Protocols~c~c" #\return #\newline)
+    (format stream "Upgrade: websocket~c~c" #\return #\newline)
+    (format stream "Connection: Upgrade~c~c" #\return #\newline)
+    (format stream "Sec-WebSocket-Accept: ")
+    (format stream (base64:usb8-array-to-base64-string
+                    (ironclad:digest-sequence :sha1 (ironclad:ascii-string-to-byte-array key))))
+    (format stream " ~c~c~c~c" #\return #\newline #\return #\newline)
+    (force-output stream)
+    
+    
+    
+  ))
 
 
 ;; -> nil | string
@@ -148,20 +195,40 @@
 
 
 ;; See https://tools.ietf.org/html/rfc6455#section-4
-(defun validate-handshake (self client request)
+(defun check-protocol (self client request headers)
   (flet ((perror (fmt &rest args)
            (error 'protocol-error :client client :text (apply #'format nil fmt args))))
-    (let* ((method (http-method request))
-           (version (http-version request))
-           (path (uri-path (uri (http-resource request))))
-           (headers (http-headers request))
-           (host (gethash "host" headers))
-           (upgrade (gethash "upgrade" headers)))
+    (let ((method (http-method request))
+          (version (http-version request))
+          (host (gethash "host" headers))
+          (upgrade (gethash "upgrade" headers))
+          (nonce (gethash "sec-websocket-key" headers))
+          (ws-version (gethash "sec-websocket-version" headers))
+          ;; optional
+                                        ;(user-agent (gethash "user-agent" headers))
+          )
       (cond ((not (eq method :get)) (perror "Invalid method ~a" method))
             ((not (>= version 1.1)) (perror "Invalid http version ~a" version))
-            ((not (string-equal path "/")) (perror "Invalid path ~a" path))
-            ((not (expected-host-p self host)) (perror "Unexpected host ~a host"))
-            ((not (string-equal upgrade "websocket")) (perror "Unexpected upgrade ~a" upgrade))))))
+            ((not (expected-host-p self host)) (perror "Unexpected host ~a host" host))
+            ((not (string-equal upgrade "websocket")) (perror "Unexpected upgrade ~a" upgrade))
+            ((not (eq ws-version 13)) (perror "Unsupported websocket version ~a" ws-version))
+            ((null nonce) (perror "Unsupported websocket version ~a" ws-version))
+            (t)))))
+
+
+(defun valid-origin-p (self origin)
+  (or (null (origins self))
+      (member origin (origins self))))
+
+
+(defun check-auth (self client request headers)
+  (flet ((aerror (fmt &rest args)
+           (error 'auth-error :client client :text (apply #'format nil fmt args))))
+    (let ((origin (gethash "origin" headers))
+          (path (uri-path (uri (http-resource request)))))
+      (cond ((not (valid-origin-p self origin)) (aerror "Invalid origin ~a" origin))
+            ((not (string-equal path (path self))) (aerror "Invalid path ~a" path))
+            (t)))))
 
 
     ;;   (format t "hello world!")
@@ -186,14 +253,13 @@
 (defun push-client (self client)
   (with-slots (sockets) self
     (push client (cdr (last sockets)))
-    (write-byte 245 (usocket:socket-stream client))
-    (force-output (usocket:socket-stream client))
     ))
 
 
 (defvar *res* nil)
 (defvar *server* nil)
 (defvar *client* nil)
+(defvar *client-real* nil)
 (defvar *client-read-thread* nil)
 
 (defun test ()
@@ -209,14 +275,15 @@
     (setf *server* nil))
   (sleep 0.150)
   (let ((os *standard-output*))
-    (setf *server* (make-server "0.0.0.0" 8081 "dev.owny.io"))
+    (setf *server* (make-server "ws://0.0.0.0:8081/ws" :host "dev.owny.io"))
     (start *server*)
-    (setf *client* (usocket:socket-connect "localhost" 8081 :element-type '(unsigned-byte 8)))
+    (setf *client* (usocket:socket-connect "localhost" 8081 ;:element-type  '(unsigned-byte 8)
+                                           ))
     (setf *client-read-thread*
           (bt:make-thread
            (lambda ()
              (loop
-               (format os "~a~%" (read-byte (usocket:socket-stream *client*) nil nil))))))
+               (format os "~a" (read-char (usocket:socket-stream *client*) nil nil))))))
     *server*
     ))
 
@@ -225,14 +292,14 @@
   (let ((stream (usocket:socket-stream *client*))
         (message (with-output-to-string (os)
                    (format os "GET /ws HTTP/1.1~c~c" #\Return #\NewLine)
-                   (format os "Host: owny.io:8081~c~c" #\Return #\NewLine)
+                   (format os "Host: dev.owny.io:8081~c~c" #\Return #\NewLine)
                    (format os "Connection: Upgrade~c~c" #\Return #\NewLine)
                    (format os "Upgrade: websocket~c~c" #\Return #\NewLine)
                    (format os "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==~c~c" #\Return #\NewLine)
                    (format os "Sec-WebSocket-Version: 13~c~c~c~c" #\Return #\NewLine #\Return #\NewLine))))
     (format t "writing ~a~%" message)
     (loop for char across message do
-      (write-byte (char-code char) stream))
+      (write-char char stream))
     ;;(write-byte 0 stream)
     (force-output stream)))
 
