@@ -14,4 +14,4 @@
 
 ;; -> nil
 ;;#[export, ftype message stream -> nil]
-(defgeneric send (self target client))
+(defgeneric send (self target data &key start end))

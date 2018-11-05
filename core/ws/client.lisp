@@ -4,25 +4,25 @@
   (:import-from :fast-http)
   (:import-from :flexi-streams)
   (:import-from :wamp/ws/protocol/base)
-  (:local-nicknames (:protocol :wamp/ws/protocol/base))
-  (:export #:client #:make-client #:recieve #:protocol #:socket-stream))
+  (:local-nicknames (:protocol :wamp/ws/protocol/base)
+                    (:websocket :wamp/ws/protocol/websocket))
+  (:export #:client #:make-client #:recieve #:send #:protocol #:socket-stream
+
+
+           #:ping 
+           ))
 
 (in-package :wamp/ws/client)
 
 
 (defclass client (usocket:stream-usocket)
   ((protocol :accessor protocol :initarg :protocol :type 'protocol:protocol )
-   (socket-stream :accessor socket-stream :initarg :socket-stream)
-   ))
+   (socket-stream :accessor socket-stream :initarg :socket-stream)))
 
 
 (defun make-client (socket protocol)
   (let ((stream (flexi-streams:make-flexi-stream (usocket:socket-stream socket) :external-format :utf-8)))
-    (change-class socket 'client :protocol protocol :socket-stream stream )))
-  
-
-;(defun socket-stream (self)
-  ;(usocket:socket-stream self))
+    (change-class socket 'client :protocol protocol :socket-stream stream)))
 
 
 ;; or can we pass down stateless information of some sort? i.e. ip address? 
@@ -30,4 +30,9 @@
   (protocol:recieve (protocol self) (socket-stream self)))
 
 
+(defun send (self data &key (start 0) (end (length data)))
+  (protocol:send (protocol self) (socket-stream self) data :start start :end end))
 
+
+(defun ping (self)
+  (websocket:ping (protocol self) (socket-stream self)))

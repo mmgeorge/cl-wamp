@@ -51,19 +51,25 @@
    ;; First socket denotes the master/acceptor socket
    (sockets :accessor sockets :initform nil)
    (thread :accessor thread :initform nil)
+   (buffer-size :reader buffer-size :initarg :buffer-size)
    ))
 
 
-(defun make-server (url &key (host nil) (origins nil))
-  (let ((uri (uri url)))
+(defun make-server (url &key (host nil) (origins nil) (buffer-size 0))
+  "Create a new server instance. BUFFER-SIZE controls how large each client buffer will be,
+   as long as the maximum length of a websocket message. Size is calculated as 2 ^ (9 + BUFFER-SIZE)"
+  (check-type buffer-size (integer 0 15))
+  (let ((uri (uri url))
+        (buffer-size (expt 2 (+ 9 buffer-size))))
     (make-instance 'server :host (uri-host uri)
                            :port (uri-port uri)
                            :path (uri-path uri)
                            :origins origins
-                           :authority host )))
+                           :authority host
+                           :buffer-size buffer-size)))
 
 
-;; Methods 
+;; Exports 
 
 (defgeneric start (server))
 (defgeneric stop (server))
@@ -86,6 +92,7 @@
     (setf (sockets self) nil))
   self)
 
+;; Internal
 
 (defun report (control-string &rest args)
   (when *log-output*
@@ -103,10 +110,13 @@
   (car (sockets self)))
 
 
-;; Internal
-
 (defun create-socket (host port)
   (usocket:socket-listen host port :element-type '(unsigned-byte 8) :reuse-address t))
+
+
+(defun push-client (self client)
+  (with-slots (sockets) self
+    (push client (cdr (last sockets)))))
 
 
 ;; for works a special debug print that reference *worker-number* of some sort ? 
@@ -122,15 +132,16 @@
             (safe-handle-client self socket))))))
 
 
+;; Dispatch message handling
+
 (defun safe-handle-client (self client)
   (handler-case (handle-client self client)
     (protocol-error (condition)
-      (report "~a" condition)
-      ))
-  )
+      (report "~a" condition))))
 
 
 (defun handle-client (self client)
+  ;; client:recieve returns nil or message when the message has been fully read
   (when-let ((data (client:recieve client)))
     (format t "GOT A MESSAGE .... HANDLING IT~%")
     (handle-message self client data)))
@@ -138,8 +149,9 @@
 
 (defun handle-message (self client data)
   (ecase (type-of (client:protocol client))
-     (protocol/http:http (process-handshake self client data))))
-  
+    (protocol/http:http (process-handshake self client data))
+    (protocol/websocket:websocket (process-message self client data))))
+
 
 (defun write-to-stream (stream src &optional (start 0) end)
   (let ((end (or end (length src))))
@@ -149,13 +161,14 @@
     (force-output stream)))
 
 
+;; Handshake (http)
 
 (defun process-handshake (self client request)
   (let ((headers (http-headers request)))
     (when (and (check-protocol self client request headers)
                (check-auth self client request headers))
       (send-handshake client headers)
-      (setf (client:protocol client) (protocol/websocket:make-websocket))
+      (setf (client:protocol client) (protocol/websocket:make-websocket (buffer-size self)))
       )))
 
 
@@ -176,11 +189,7 @@
     (format stream (base64:usb8-array-to-base64-string
                     (ironclad:digest-sequence :sha1 (ironclad:ascii-string-to-byte-array key))))
     (format stream " ~c~c~c~c" #\return #\newline #\return #\newline)
-    (force-output stream)
-    
-    
-    
-  ))
+    (force-output stream)))
 
 
 ;; -> nil | string
@@ -231,29 +240,20 @@
             (t)))))
 
 
-    ;;   (format t "hello world!")
-  
-;;     ;; change me!
-;;     ;;; PASS IN ACTUAL BUF HERE...
-;;     (funcall (parser client) data :end (client:len client) )
-;;     (setf (client:len client) -1)
+;; Websocket message handling
 
-;;     (format t "~a" http)
-;;     ;;(write-byte 101 (usocket:socket-stream client))
-;;     ;;(force-output (usocket:socket-stream client))
-;;     )
+(defun process-message (self client message)
+  (declare (ignore self))
+  (format t "procing message ~a" message)
+  (destructuring-bind (opsym data end) message
+    (case opsym
+      (:binary (client:send client data :start 0 :end end))
+      (:text (progn (client:send client data :start 0 :end end)
+                    (client:ping client)))
+      (:close (usocket:socket-shutdown client :io))
+      (:ping (error "got ping"))
+      (:pong (error "got pong")))))
 
-;; can we rebind standard-output for easier debuging? 
-
-
-(defun process-websocket-frame (self client data)
-  (declare (ignore self client data)))
-
-
-(defun push-client (self client)
-  (with-slots (sockets) self
-    (push client (cdr (last sockets)))
-    ))
 
 
 (defvar *res* nil)
