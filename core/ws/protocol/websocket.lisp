@@ -1,5 +1,5 @@
 (defpackage :wamp/ws/protocol/websocket
-  (:use :cl)
+  (:use :cl :alexandria)
   (:import-from :wamp/ws/protocol/base)
   (:local-nicknames (:protocol :wamp/ws/protocol/base))
   (:export #:websocket #:make-websocket #:ping))
@@ -21,13 +21,11 @@
 
 
 (defmethod protocol:recieve ((self websocket) stream)
-  (when (read-frame self stream)
-    (let ((op (current-op self))
-          (buf (buffer self))
-          (end (1- (index self))))
-      (reset self)
-      (list op buf end))))
-
+  (when-let ((message (multiple-value-list (read-frame self stream))))
+    (format t "Got a message ~a~%"message)
+    (reset self)
+    message))
+  
 
 (defmethod protocol:send ((self websocket) stream data &key start end)
   (format t "sending buf~a" data)
@@ -36,7 +34,7 @@
 
 (defmethod ping ((self websocket) stream)
   (declare (ignore self))
-  (write-frame stream :ping (make-array 0 :element-type '(unsigned-byte 8)) :start 0 :end 0))
+  (write-frame stream :ping (make-array 1 :element-type '(unsigned-byte 8)) :start 0 :end 1))
 
 
 ;; Internal
@@ -45,29 +43,47 @@
   (setf (current-op self) nil))
 
 
+(defun control-frame-p (opsym)
+  (or (eq opsym :close) (eq opsym :ping) (eq opsym :pong)))
+
+
 ;; See https://tools.ietf.org/html/rfc6455#section-5.2
 (defun read-frame (self stream &key (expects-rsv nil))
   (when (not (listen stream))
     (return-from read-frame))
+  (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
+    (format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
+    (if (control-frame-p opsym)
+        (read-control-frame self stream opsym len mask)
+        (read-standard-frame self stream fin opsym len mask))))
 
-  (multiple-value-bind (fin rsv opcode len mask) (read-header stream expects-rsv)
-    (format t "Got fin:~a rsv:~a opcode:~a len:~a mask~a~%" fin rsv opcode len mask)
 
-    
-    (let ((buffer (buffer self))
-          (start (index self))
-          (end (1- len)))
+(defun read-control-frame (self stream opsym len mask)
+  (declare (ignore self))
+  (if (> len 0)
+      (let* ((buffer (make-array len :element-type '(unsigned-byte 8)))
+             (index (if mask
+                        (read-masked-body stream buffer mask 0 len)
+                        (read-body stream buffer 0 len))))
+        (values opsym buffer (1- index)))
+      (values opsym nil nil )))
+                                        ;  (case opsym
+       ;   (:close (values :close buffer (1- index)))
+        ;  (:pong (values :pong buffer (1- index)))
+         ; ))
 
-      (setf (current-op self) opcode)
-      (setf (index self)
-            (if mask
-                (read-masked-body stream buffer mask start end)
-                (read-body stream buffer start end)))
-      (format t "Got op ~a~%~%buf:~% ~a" opcode
-              (flexi-streams:octets-to-string buffer :external-format :utf-8))
 
-      fin)))
-
+(defun read-standard-frame (self stream fin opsym len mask)
+  (let ((buffer (buffer self))
+        (start (index self)))
+    (setf (current-op self) opsym)
+    (setf (index self)
+          (if mask
+              (read-masked-body stream buffer mask start len)
+              (read-body stream buffer start len)))
+    (format t "Got op ~a~%~%buf:~% ~a" opsym
+            (flexi-streams:octets-to-string buffer :external-format :utf-8))
+    (when fin (values (current-op self) (buffer self) (1- (index self))))))
 
 (defun write-frame (stream opsym data &key start end (rsv nil) use-mask)
   (let ((fin t)
@@ -241,7 +257,7 @@
 
 
 (defun read-body (stream buffer start end)
-  (loop for i from 0 to end
+  (loop for i from 0 below end
         for byte = (read-byte stream nil nil)
         do (setf (aref buffer i) byte)
         finally (return (1+ i))))
@@ -254,7 +270,7 @@
 
 
 (defun read-masked-body (stream buffer mask-key start end)
-  (loop for i from start to end
+  (loop for i from start below end
         for mask = (ldb (byte 8 (* 8 (- 3 (mod i 4)))) mask-key)
         for byte = (read-byte stream nil nil)
         for unmasked-byte = (logxor byte mask)

@@ -126,10 +126,14 @@
   (with-slots (sockets) self
     (loop
       (loop for socket in (usocket:wait-for-input sockets :ready-only t) do
-        (if (eq socket (acceptor self))
-            (push-client self (client:make-client (usocket:socket-accept socket)
-                                                  (protocol/http:make-http)))
-            (safe-handle-client self socket))))))
+        (cond ((eq socket (acceptor self))
+               (push-client self (client:make-client (usocket:socket-accept socket)
+                                                     (protocol/http:make-http))))
+              ((eq (client:status socket) :shutdown)
+               (client:stop socket)
+               (setf (sockets self)
+                     (delete socket (sockets self))))
+              (t (safe-handle-client self socket)))))))
 
 
 ;; Dispatch message handling
@@ -250,9 +254,12 @@
       (:binary (client:send client data :start 0 :end end))
       (:text (progn (client:send client data :start 0 :end end)
                     (client:ping client)))
-      (:close (usocket:socket-shutdown client :io))
+      (:close (progn
+                (format t "Shuting down socket")
+                (usocket:socket-shutdown client :io)
+                (setf (client:status client) :shutdown)))
       (:ping (error "got ping"))
-      (:pong (error "got pong")))))
+      (:pong (format t "Got pong with body ~a (end:~a)~%" data end)))))
 
 
 

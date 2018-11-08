@@ -4,11 +4,12 @@
   (:import-from :fast-http)
   (:import-from :flexi-streams)
   (:import-from :wamp/ws/protocol/base)
+  (:import-from :wamp/ws/protocol/websocket)
   (:local-nicknames (:protocol :wamp/ws/protocol/base)
                     (:websocket :wamp/ws/protocol/websocket))
   (:export #:client #:make-client #:recieve #:send #:protocol #:socket-stream
-
-
+           #:status
+           #:stop
            #:ping 
            ))
 
@@ -17,7 +18,9 @@
 
 (defclass client (usocket:stream-usocket)
   ((protocol :accessor protocol :initarg :protocol :type 'protocol:protocol )
-   (socket-stream :accessor socket-stream :initarg :socket-stream)))
+   (socket-stream :accessor socket-stream :initarg :socket-stream)
+   (status :accessor status :initform :open)
+   ))
 
 
 (defun make-client (socket protocol)
@@ -36,3 +39,10 @@
 
 (defun ping (self)
   (websocket:ping (protocol self) (socket-stream self)))
+
+(defun stop (self)
+  (let ((stream (socket-stream self)))
+    (loop while (listen stream)
+          for byte = (read-byte stream nil nil)
+          do (format t "Got terminating byte ~b~%" byte))
+    (usocket:socket-close self)))
