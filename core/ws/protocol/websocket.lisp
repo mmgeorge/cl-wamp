@@ -2,7 +2,7 @@
   (:use :cl :alexandria)
   (:import-from :wamp/ws/protocol/base)
   (:local-nicknames (:protocol :wamp/ws/protocol/base))
-  (:export #:websocket #:make-websocket #:ping))
+  (:export #:websocket #:make-websocket #:ping #:pong))
 
 (in-package :wamp/ws/protocol/websocket)
 
@@ -32,9 +32,15 @@
   (write-frame stream :text data :start start :end end :use-mask (mask-frames-p self)))
 
 
-(defmethod ping ((self websocket) stream)
+(defmethod ping ((self websocket) stream buffer &key start end)
   (declare (ignore self))
-  (write-frame stream :ping (make-array 1 :element-type '(unsigned-byte 8)) :start 0 :end 1))
+  (write-frame stream :ping buffer :start start :end end :start 0 :end 1))
+
+
+(defmethod pong ((self websocket) stream buffer &key start end)
+  (declare (ignore self))
+  (write-frame stream :pong buffer :start start :end end))
+
 
 
 ;; Internal
@@ -67,10 +73,6 @@
                         (read-body stream buffer 0 len))))
         (values opsym buffer (1- index)))
       (values opsym nil nil )))
-                                        ;  (case opsym
-       ;   (:close (values :close buffer (1- index)))
-        ;  (:pong (values :pong buffer (1- index)))
-         ; ))
 
 
 (defun read-standard-frame (self stream fin opsym len mask)
@@ -257,7 +259,7 @@
 
 
 (defun read-body (stream buffer start end)
-  (loop for i from 0 below end
+  (loop for i from start below end
         for byte = (read-byte stream nil nil)
         do (setf (aref buffer i) byte)
         finally (return (1+ i))))

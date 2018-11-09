@@ -7,11 +7,8 @@
   (:import-from :wamp/ws/protocol/websocket)
   (:local-nicknames (:protocol :wamp/ws/protocol/base)
                     (:websocket :wamp/ws/protocol/websocket))
-  (:export #:client #:make-client #:recieve #:send #:protocol #:socket-stream
-           #:status
-           #:stop
-           #:ping 
-           ))
+  (:export #:client #:make-client #:recieve #:send #:send-error #:protocol #:socket-stream
+           #:status #:stop #:ping))
 
 (in-package :wamp/ws/client)
 
@@ -37,8 +34,16 @@
   (protocol:send (protocol self) (socket-stream self) data :start start :end end))
 
 
-(defun ping (self)
-  (websocket:ping (protocol self) (socket-stream self)))
+(defun send-error (self message)
+  (protocol:send-error (protocol self) (socket-stream self) message))
+
+
+(defun ping (self buffer &key start end)
+  (websocket:ping (protocol self) (socket-stream self) buffer :start start :end end))
+
+(defun pong (self buffer &key start end)
+  (websocket:pong (protocol self) (socket-stream self) buffer :start start :end end))
+
 
 (defun stop (self)
   (let ((stream (socket-stream self)))

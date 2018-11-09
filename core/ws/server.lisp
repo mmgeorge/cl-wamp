@@ -2,6 +2,7 @@
   (:use :cl :alexandria :fast-http :quri)
   (:import-from :usocket)
   (:import-from :bordeaux-threads)
+  (:import-from :local-time)
   (:import-from :fast-http)
   (:import-from :ironclad)
   (:import-from :cl-base64)
@@ -129,19 +130,25 @@
         (cond ((eq socket (acceptor self))
                (push-client self (client:make-client (usocket:socket-accept socket)
                                                      (protocol/http:make-http))))
-              ((eq (client:status socket) :shutdown)
-               (client:stop socket)
-               (setf (sockets self)
-                     (delete socket (sockets self))))
+              ((eq (client:status socket) :shutdown) (close-socket self socket))
               (t (safe-handle-client self socket)))))))
 
 
 ;; Dispatch message handling
 
+(defun close-socket (self socket)
+  (client:stop socket)
+  (setf (sockets self)
+        (delete socket (sockets self))))
+
+
 (defun safe-handle-client (self client)
   (handler-case (handle-client self client)
     (protocol-error (condition)
-      (report "~a" condition))))
+      (report "~a" condition)
+      (client:send-error client (text condition))
+      (close-socket self client))))
+    
 
 
 (defun handle-client (self client)
@@ -183,7 +190,6 @@
         (nonce (gethash "sec-websocket-key" headers))
         (key (concatenate 'string nonce %accept-key))
          )
-
     ;; use flexi stream here? 
     
     (format stream "HTTP/1.1 101 Switching Protocols~c~c" #\return #\newline)
@@ -218,7 +224,7 @@
           (nonce (gethash "sec-websocket-key" headers))
           (ws-version (gethash "sec-websocket-version" headers))
           ;; optional
-                                        ;(user-agent (gethash "user-agent" headers))
+          ;;(user-agent (gethash "user-agent" headers))
           )
       (cond ((not (eq method :get)) (perror "Invalid method ~a" method))
             ((not (>= version 1.1)) (perror "Invalid http version ~a" version))
@@ -252,13 +258,12 @@
   (destructuring-bind (opsym data end) message
     (case opsym
       (:binary (client:send client data :start 0 :end end))
-      (:text (progn (client:send client data :start 0 :end end)
-                    (client:ping client)))
+      (:text (client:send client data :start 0 :end end))
       (:close (progn
                 (format t "Shuting down socket")
                 (usocket:socket-shutdown client :io)
                 (setf (client:status client) :shutdown)))
-      (:ping (error "got ping"))
+      (:ping (client:pong client data :start 0 :end end))
       (:pong (format t "Got pong with body ~a (end:~a)~%" data end)))))
 
 

@@ -2,6 +2,7 @@
   (:use :cl)
   (:import-from :fast-http)
   (:import-from :wamp/ws/protocol/base)
+  (:import-from :local-time)
   (:local-nicknames (:protocol :wamp/ws/protocol/base))
   (:export #:http #:make-http))
 
@@ -46,19 +47,27 @@
 
 
 (defmethod protocol:recieve ((self http) stream)
-  ;(when (listen stream)
-  ;;(setf (flexi-streams:flexi-stream-external-format stream) )
-  ;(handler-case
-      (with-accessors ((buffer buffer) (request request) (parser parser)) self
-        (let ((length (buffered-read stream buffer 0)))
-          (format t "GOT LENGTH OF ~a buf ~a" length buffer)
-          (funcall parser buffer :end length)
-          (format t "~a~%" (request self))
-          (format t "HEAD: ~a ~%~% " (fast-http:http-headers (request self)))
-          (and (recieved-p self)
-               (yield-request self))))
-    ;(t () nil ))
-    )
+  (with-accessors ((buffer buffer) (request request) (parser parser)) self
+    (let ((length (buffered-read stream buffer 0)))
+      (format t "GOT LENGTH OF ~a buf ~a" length buffer)
+      (funcall parser buffer :end length)
+      (format t "~a~%" (request self))
+      (format t "HEAD: ~a ~%~% " (fast-http:http-headers (request self)))
+      (and (recieved-p self)
+           (yield-request self)))))
+
+
+(defmethod protocol:send-error ((self http) stream message)
+  (format stream "HTTP/1.1 400 Bad Request~c~c" #\return #\newline)
+  (format stream "Server: cl-wamp~c~c" #\return #\newline)
+  (format stream "Date: " )
+  (local-time:format-timestring stream (local-time:now) :format local-time:+rfc-1123-format+)
+  (format stream "~c~c" #\return #\newline)
+  (format stream "Content-Length: ~a~c~c" (length message) #\return #\newline)
+  (format stream "Content-Type: text/plain; charset=utf-8~c~c" #\return #\newline)
+  (format stream "~c~c" #\return #\newline)
+  (format stream "~a" message)
+  (force-output stream))
 
 
 (defun yield-request (self )
