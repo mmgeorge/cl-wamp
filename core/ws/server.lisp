@@ -16,8 +16,6 @@
 
 (in-package :wamp/ws/server)
 
-(defparameter %accept-key "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-
 (defvar *log-output* *standard-output*)
 
 ;; conditions
@@ -148,7 +146,6 @@
       (report "~a" condition)
       (client:send-error client (text condition))
       (close-socket self client))))
-    
 
 
 (defun handle-client (self client)
@@ -178,28 +175,7 @@
   (let ((headers (http-headers request)))
     (when (and (check-protocol self client request headers)
                (check-auth self client request headers))
-      (send-handshake client headers)
-      (setf (client:protocol client) (protocol/websocket:make-websocket (buffer-size self)))
-      )))
-
-
-(defun send-handshake (client headers)
-  (let* ((stream (client:socket-stream client))
-        ;(protocols (gethash "sec-websocket-protocol" headers))
-        ;(extensions (gethash "sec-websocket-extensions" headers))
-        (nonce (gethash "sec-websocket-key" headers))
-        (key (concatenate 'string nonce %accept-key))
-         )
-    ;; use flexi stream here? 
-    
-    (format stream "HTTP/1.1 101 Switching Protocols~c~c" #\return #\newline)
-    (format stream "Upgrade: websocket~c~c" #\return #\newline)
-    (format stream "Connection: Upgrade~c~c" #\return #\newline)
-    (format stream "Sec-WebSocket-Accept: ")
-    (format stream (base64:usb8-array-to-base64-string
-                    (ironclad:digest-sequence :sha1 (ironclad:ascii-string-to-byte-array key))))
-    (format stream " ~c~c~c~c" #\return #\newline #\return #\newline)
-    (force-output stream)))
+      (client:upgrade-accept client 'protocol/websocket:websocket :bufsize (buffer-size self)))))
 
 
 ;; -> nil | string
@@ -289,7 +265,7 @@
   (let ((os *standard-output*))
     (setf *server* (make-server "ws://0.0.0.0:8081/ws" :host "dev.owny.io"))
     (start *server*)
-    (setf *client* (usocket:socket-connect "localhost" 8081 ;:element-type  '(unsigned-byte 8)
+    (setf *client* (usocket:socket-connect   "localhost" 8081 ;:element-type  '(unsigned-byte 8)
                                            ))
     (setf *client-read-thread*
           (bt:make-thread

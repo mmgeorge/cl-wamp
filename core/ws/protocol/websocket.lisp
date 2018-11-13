@@ -16,7 +16,12 @@
    ))
 
 
-(defun make-websocket (buffer-size)
+(defmethod initialize-instance :after ((self websocket) &key bufsize)
+  (setf (slot-value self 'buffer)
+        (make-array bufsize :element-type '(unsigned-byte 8))))
+
+
+(defun make-websocket (&optional (buffer-size (expt 2 (+ 9 15))))
   (make-instance 'websocket :buffer (make-array buffer-size :element-type '(unsigned-byte 8))))
 
 

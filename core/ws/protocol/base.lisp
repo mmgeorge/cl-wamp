@@ -1,6 +1,7 @@
 (defpackage :wamp/ws/protocol/base
   (:use :cl)
-  (:export #:protocol #:recieve #:send #:send-error))
+  (:export #:protocol #:recieve #:send #:send-error
+           #:upgrade-request #:upgrade-accept))
 
 (in-package :wamp/ws/protocol/base)
 
@@ -17,3 +18,8 @@
 (defgeneric send (self target data &key start end))
 
 (defgeneric send-error (self target message))
+(defgeneric upgrade-request (self target-protocol))
+(defgeneric upgrade-accept (self target-protocol))
+
+
+
