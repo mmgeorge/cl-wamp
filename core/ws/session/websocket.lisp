@@ -1,54 +1,49 @@
-(defpackage :wamp/ws/protocol/websocket
+(defpackage :wamp/ws/session/websocket
   (:use :cl :alexandria)
-  (:import-from :wamp/ws/protocol/base)
-  (:local-nicknames (:protocol :wamp/ws/protocol/base))
+  (:import-from :wamp/ws/session/session #:session)
+  (:local-nicknames (:session :wamp/ws/session/session))
   (:export #:websocket #:make-websocket #:ping #:pong))
 
-(in-package :wamp/ws/protocol/websocket)
+(in-package :wamp/ws/session/websocket)
 
 
-(defclass websocket ()
+(defclass websocket (session)
   ((mask-frames :accessor mask-frames-p :initform nil)
-   (buffer :reader buffer :initarg :buffer)
    ;; Current parser state
    (index :accessor index :initform 0)
-   (current-op :accessor current-op :initform nil)
-   ))
+   (current-op :accessor current-op :initform nil)))
 
 
-(defmethod initialize-instance :after ((self websocket) &key bufsize)
-  (setf (slot-value self 'buffer)
-        (make-array bufsize :element-type '(unsigned-byte 8))))
+(defgeneric send (self data &key start end))
+(defgeneric pong (self data &key start end))
 
 
-(defun make-websocket (&optional (buffer-size (expt 2 (+ 9 15))))
-  (make-instance 'websocket :buffer (make-array buffer-size :element-type '(unsigned-byte 8))))
+;; Exports
+
+(defmethod session:recieve ((self websocket))
+  (with-slots ((stream session::socket-stream)) self
+    (when-let ((message (multiple-value-list (read-frame self stream))))
+      (reset self)
+      message)))
 
 
-(defmethod protocol:recieve ((self websocket) stream)
-  (when-let ((message (multiple-value-list (read-frame self stream))))
-    (format t "Got a message ~a~%"message)
-    (reset self)
-    message))
-  
-
-(defmethod protocol:send ((self websocket) stream data &key start end)
-  (format t "sending buf~a" data)
-  (write-frame stream :text data :start start :end end :use-mask (mask-frames-p self)))
+(defmethod session:send ((self websocket) data &key start end)
+  (with-slots ((stream session::socket-stream)) self
+    (write-frame stream :text data :start start :end end :use-mask (mask-frames-p self))))
 
 
-(defmethod ping ((self websocket) stream buffer &key start end)
-  (declare (ignore self))
-  (write-frame stream :ping buffer :start start :end end :start 0 :end 1))
+(defmethod ping ((self websocket) buffer &key start end)
+  (with-slots ((stream session::socket-stream)) self
+    (write-frame stream :ping buffer :start start :end end :start 0 :end 1)))
 
 
-(defmethod pong ((self websocket) stream buffer &key start end)
-  (declare (ignore self))
-  (write-frame stream :pong buffer :start start :end end))
-
+(defmethod pong ((self websocket) buffer &key start end)
+  (with-slots ((stream session::socket-stream)) self
+    (write-frame stream :pong buffer :start start :end end)))
 
 
 ;; Internal
+
 (defun reset (self)
   (setf (index self) 0)
   (setf (current-op self) nil))
@@ -60,13 +55,13 @@
 
 ;; See https://tools.ietf.org/html/rfc6455#section-5.2
 (defun read-frame (self stream &key (expects-rsv nil))
-  (when (not (listen stream))
-    (return-from read-frame))
-  (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
-    (format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
-    (if (control-frame-p opsym)
-        (read-control-frame self stream opsym len mask)
-        (read-standard-frame self stream fin opsym len mask))))
+    (when (not (listen stream))
+      (return-from read-frame))
+    (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
+      (format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
+      (if (control-frame-p opsym)
+          (read-control-frame self stream opsym len mask)
+          (read-standard-frame self stream fin opsym len mask))))
 
 
 (defun read-control-frame (self stream opsym len mask)
@@ -81,16 +76,16 @@
 
 
 (defun read-standard-frame (self stream fin opsym len mask)
-  (let ((buffer (buffer self))
-        (start (index self)))
+  (with-slots (index (buffer session::buffer)) self 
     (setf (current-op self) opsym)
     (setf (index self)
           (if mask
-              (read-masked-body stream buffer mask start len)
-              (read-body stream buffer start len)))
-    (format t "Got op ~a~%~%buf:~% ~a" opsym
-            (flexi-streams:octets-to-string buffer :external-format :utf-8))
-    (when fin (values (current-op self) (buffer self) (1- (index self))))))
+              (read-masked-body stream buffer mask index len)
+              (read-body stream buffer index len)))
+    (format t "Got op ~a~%~%message:~% ~a~%" opsym
+            (flexi-streams:octets-to-string buffer :end (1- index) :external-format :utf-8))
+    (when fin (values (current-op self) buffer (1- index)))))
+
 
 (defun write-frame (stream opsym data &key start end (rsv nil) use-mask)
   (let ((fin t)
@@ -100,11 +95,8 @@
     (if mask
         (error "Writing masked frames is not currently support")
         (write-body stream data start end)))
-  (force-output stream)
-  )
+  (force-output stream))
 
-
-;; Header processing
 
 (defun read-header (stream expects-rsv)
     (multiple-value-bind (fin rsv opcode)
@@ -272,8 +264,8 @@
 
 (defun write-body (stream data start end)
   (format t "Writing body!!~%")
-    (format t "GOT WROTE body ~a!!~%" (subseq data start end))
-    (write-sequence data stream :start start :end end))
+                                        ;(format t "GOT WROTE body ~a!!~%" (subseq data start end))
+  (write-sequence data stream :start start :end end))
 
 
 (defun read-masked-body (stream buffer mask-key start end)
