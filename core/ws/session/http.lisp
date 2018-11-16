@@ -1,5 +1,5 @@
 (defpackage :wamp/ws/session/http
-  (:use :cl)
+  (:use :cl :wamp/ws/session/session)
   (:import-from :fast-http)
   (:import-from :local-time)
   (:import-from :ironclad)
@@ -15,41 +15,48 @@
 
 
 (defclass http (session)
-  ((request :initform nil)
+  ((message :accessor message :initform nil)
+   (request :accessor request :initform nil :documentation "Current outstanding request")
    (parser :initform nil)
    (recieved-p :accessor recieved-p :initform nil)
-   (upgrade-request :accessor upgrade-request :initform nil)
    (upgrade-key :accessor upgrade-key :initform nil)))
-
-
-(defun request (self)
-  (with-slots (request) self
-    (or request (setf request (fast-http:make-http-request)))))
 
 
 (defun parser (self)
   (with-slots (parser) self
     (flet ((cb () (setf (recieved-p self) t) (format t "GOT!! ~%")))
       (or parser
-          (setf parser (fast-http:make-parser
-                        (request self)
-                        :header-callback (lambda (headers) (format t "GOT HEAD ~a~%" headers))
-                        :finish-callback #'cb))))))
-
+          (let ((message (if (upgrade-key self)
+                             (fast-http:make-http-response)
+                             (fast-http:make-http-request))))
+            (setf (request self) message)
+            (setf (message self) message)
+            (setf parser (fast-http:make-parser
+                          message
+                          :header-callback (lambda (headers) (format t "GOT HEAD ~a~%" headers))
+                          :body-callback (lambda (data start end)
+                                           (let* ((chunk-len (- end start)))
+                                             ;; (format t "Got chunk ~a ~a ~a" data start end)))
+                                             (replace (buffer self) data :start1 (index self)
+                                                                         :start2 start :end2 end)
+                                             (setf (index self)
+                                                   (+ (index self) chunk-len))))
+                          :finish-callback #'cb)))))))
 
 ;; Exports
 
+
 (defmethod session:recieve ((self http))
   (with-slots ((stream session::socket-stream)) self
-    (cond ((upgrade-request self) (error "Outstanding upgrade request"))
-          ((upgrade-key self) (error "has key"))
+    (cond ((upgrade-key self)
+           (read-socket self stream))
           (t (read-socket self stream)))))
 
 
 (defmethod session:upgrade-request ((self http))
   (with-slots ((stream session::socket-stream)) self
     (format stream "GET /ws HTTP/1.1~c~c" #\return #\newline)
-    (format stream "Host: owny.dev.io~c~c" #\return #\newline)
+    (format stream "Host: dev.owny.io:8081~c~c" #\return #\newline)
     (format stream "Upgrade: websocket~c~c" #\return #\newline)
     (format stream "Connection: Upgrade~c~c" #\return #\newline)
     (format stream "Sec-WebSocket-Key: ~a~c~c" (generate-nonce self) #\return #\newline)
@@ -58,11 +65,10 @@
     (force-output stream)))
 
 
-(defmethod session:upgrade-accept ((self http))
+
+(defmethod session:upgrade-accept ((self http) request)
   (with-slots ((stream session::socket-stream)) self
-      (unless (upgrade-request self)
-        (error "Cannot accept upgrade request - no upgrade request found"))
-    (let* ((headers (fast-http:http-headers (upgrade-request self)))
+    (let* ((headers (fast-http:http-headers request))
            (nonce (gethash "sec-websocket-key" headers))
            (key (concatenate 'string nonce %accept-key))
            ;;(protocols (gethash "sec-websocket-protocol" headers))
@@ -79,17 +85,21 @@
       t)))
 
 
-;; (defmethod protocol:send-error ((self http) stream message)
-;;   (format stream "HTTP/1.1 400 Bad Request~c~c" #\return #\newline)
-;;   (format stream "Server: cl-wamp~c~c" #\return #\newline)
-;;   (format stream "Date: " )
-;;   (local-time:format-timestring stream (local-time:now) :format local-time:+rfc-1123-format+)
-;;   (format stream "~c~c" #\return #\newline)
-;;   (format stream "Content-Length: ~a~c~c" (length message) #\return #\newline)
-;;   (format stream "Content-Type: text/plain; charset=utf-8~c~c" #\return #\newline)
-;;   (format stream "~c~c" #\return #\newline)
-;;   (format stream "~a" message)
-;;   (force-output stream))
+(defmethod session:send ((self http) (condition error) &key start end)
+  (declare (ignore start end))
+  (with-slots ((stream session::socket-stream)) self
+    (let ((message (format nil "~a" condition)))
+      (format stream "HTTP/1.1 400 Bad Request~c~c" #\return #\newline)
+      (format stream "Server: cl-wamp~c~c" #\return #\newline)
+      (format stream "Date: " )
+      (local-time:format-timestring stream (local-time:now) :format local-time:+rfc-1123-format+)
+      (format stream "~c~c" #\return #\newline)
+      (format stream "Content-Length: ~a~c~c" (length message) #\return #\newline)
+      (format stream "Content-Language: en~c~c" #\return #\newline)
+      (format stream "Content-Type: text/plain; charset=utf-8~c~c" #\return #\newline)
+      (format stream "~c~c" #\return #\newline)
+      (format stream "~a" message)
+      (force-output stream))))
 
 ;; Internal
 
@@ -101,7 +111,7 @@
       (format t "~a~%" (request self))
       (format t "HEAD: ~a ~%~% " (fast-http:http-headers (request self)))
       (and (recieved-p self)
-           (yield-request self)))))
+           (yield self)))))
 
 
 (defun generate-nonce (self)
@@ -114,13 +124,16 @@
     (gethash "upgrade" headers)))
 
 
-(defun yield-request (self )
-  (let ((request (request self)))
+(defun yield (self )
+  (let ((message (message self))
+        (index (index self)))
     (setf (recieved-p self) nil)
-    (setf (slot-value self 'request) nil)
-    (when (upgrade-request-p request)
-      (setf (upgrade-request self) request))
-    request))
+    (setf (slot-value self 'parser) nil)
+    (setf (slot-value self 'message) nil)
+    (setf (slot-value self 'index) 0)
+  (if (> index 0)
+      (values message (buffer self) 0 index)
+      message)))
 
 
 (defun buffered-read (stream buffer start)

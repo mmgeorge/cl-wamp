@@ -1,4 +1,4 @@
-1(defpackage :wamp/ws/server
+(defpackage :wamp/ws/server
   (:use :cl :alexandria :fast-http :quri)
   (:import-from :usocket)
   (:import-from :bordeaux-threads)
@@ -187,7 +187,7 @@
   (handler-case (handle-session self session)
     (protocol-error (condition)
       (report "~a" condition)
-      ;(session:send-error session (text condition))
+      (session:send session condition)
       (close-socket self session))))
 
 
@@ -218,7 +218,7 @@
   (let ((headers (http-headers request)))
     (when (and (check-protocol self session request headers)
                (check-auth self session request headers))
-      (session:upgrade-accept session)
+      (session:upgrade-accept session request)
       (change-class session 'session/websocket:websocket)
       )))
 
@@ -249,7 +249,7 @@
           )
       (cond ((not (eq method :get)) (perror "Invalid method ~a" method))
             ((not (>= version 1.1)) (perror "Invalid http version ~a" version))
-            ((not (expected-host-p self host)) (perror "Unexpected host ~a host" host))
+            ((not (expected-host-p self host)) (perror "Unexpected host ~a" host))
             ((not (string-equal upgrade "websocket")) (perror "Unexpected upgrade ~a" upgrade))
             ((not (eq ws-version 13)) (perror "Unsupported websocket version ~a" ws-version))
             ((null nonce) (perror "Unsupported websocket version ~a" ws-version))
@@ -310,8 +310,7 @@
   (let ((os *standard-output*))
     (setf *server* (make-server "ws://0.0.0.0:8081/ws" :host "dev.owny.io"))
     (start *server*)
-    (setf *session* (usocket:socket-connect   "localhost" 8081 ;:element-type  '(unsigned-byte 8)
-                                           ))
+    (setf *session* (usocket:socket-connect "localhost" 8081))
     (setf *session-read-thread*
           (bt:make-thread
            (lambda ()

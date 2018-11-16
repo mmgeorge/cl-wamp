@@ -1,6 +1,7 @@
 (defpackage :wamp/ws/session/websocket
-  (:use :cl :alexandria)
+  (:use :cl :alexandria :wamp/ws/session/session)
   (:import-from :wamp/ws/session/session #:session)
+  (:import-from :wamp/ws/session/http #:http)
   (:local-nicknames (:session :wamp/ws/session/session))
   (:export #:websocket #:make-websocket #:ping #:pong))
 
@@ -10,7 +11,6 @@
 (defclass websocket (session)
   ((mask-frames :accessor mask-frames-p :initform nil)
    ;; Current parser state
-   (index :accessor index :initform 0)
    (current-op :accessor current-op :initform nil)))
 
 
@@ -23,8 +23,9 @@
 (defmethod session:recieve ((self websocket))
   (with-slots ((stream session::socket-stream)) self
     (when-let ((message (multiple-value-list (read-frame self stream))))
-      (reset self)
-      message)))
+      (when (car message)
+        (reset self)
+        message))))
 
 
 (defmethod session:send ((self websocket) data &key start end)
@@ -55,7 +56,7 @@
 
 ;; See https://tools.ietf.org/html/rfc6455#section-5.2
 (defun read-frame (self stream &key (expects-rsv nil))
-    (when (not (listen stream))
+  (when (not (listen stream))
       (return-from read-frame))
     (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
       (format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
@@ -76,7 +77,7 @@
 
 
 (defun read-standard-frame (self stream fin opsym len mask)
-  (with-slots (index (buffer session::buffer)) self 
+  (with-slots ((index session::index) (buffer session::buffer)) self 
     (setf (current-op self) opsym)
     (setf (index self)
           (if mask
@@ -84,6 +85,7 @@
               (read-body stream buffer index len)))
     (format t "Got op ~a~%~%message:~% ~a~%" opsym
             (flexi-streams:octets-to-string buffer :end (1- index) :external-format :utf-8))
+    (format t "Read std frame ~%")
     (when fin (values (current-op self) buffer (1- index)))))
 
 
@@ -257,6 +259,7 @@
 
 (defun read-body (stream buffer start end)
   (loop for i from start below end
+        while (listen stream)
         for byte = (read-byte stream nil nil)
         do (setf (aref buffer i) byte)
         finally (return (1+ i))))
