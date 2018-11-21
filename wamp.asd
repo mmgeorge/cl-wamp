@@ -5,7 +5,9 @@
   :pathname "core"
   :depends-on ("wamp/session"
                "wamp/transport/websocket"
-               "wamp/ws/server")
+               "wamp/ws/server"
+               "wamp/ws/client"
+               "wamp/test/ws/client")
   :in-order-to ((asdf:test-op (asdf:test-op "wamp/test"))))
 
 

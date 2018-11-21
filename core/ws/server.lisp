@@ -19,33 +19,6 @@
 (defvar *log-output* *standard-output*)
 
 
-
-;; (defclass nothing ()
-;;   ((value :initform 10)))
-
-;; ;; conditions
-;; (defclass test (nothing)
-;;   ((arg :reader arg :initform nil :initarg arg)))
-
-
-
-;; (defclass omega (nothing)
-;;   ((darg :initform nil)))
-
-;; (defmethod initialize-instance :after ((self test) &key arg)
-;;   (setf (slot-value self 'arg) arg)
-;;   )
-
-;; (defmethod initialize-instance :after ((self omega) &key darg)
-;;   (setf (slot-value self 'darg) darg)
-;;   )
-
-
-;; (defmethod update-instance-for-different-class :after ((old omega) (new test) &key arg)
-;;   (format t "~a" arg)
-;;   )
-
-
 (define-condition protocol-error (error)
   ((text :initarg :text :reader text)
    (session :initarg :session :reader session))
@@ -154,6 +127,7 @@
 
 
 (defun make-session (socket bufsize)
+  (format t "Accepted a new session ~a~%" socket)
   (change-class socket 'session/http:http :bufsize bufsize))
 
 
@@ -188,13 +162,16 @@
     (protocol-error (condition)
       (report "~a" condition)
       (session:send session condition)
+      (close-socket self session))
+    (t (e)
+      (report "Got an error ~a closing client" e)
       (close-socket self session))))
 
 
 (defun handle-session (self session)
   ;; session:recieve returns nil or message when the message has been fully read
   (when-let ((data (session:recieve session)))
-    (format t "GOT A MESSAGE .... HANDLING IT~%")
+    ;;(format t "GOT A MESSAGE .... HANDLING IT~%")
     (handle-message self session data)))
 
 
@@ -275,13 +252,16 @@
 
 (defun process-message (self session message)
   (declare (ignore self))
-  (format t "procing message type ~a~%" (car message))
+  ;;(format t "procing message type ~a~%" (car message))
   (destructuring-bind (opsym data end) message
     (case opsym
       (:binary (session:send session data :start 0 :end end))
-      (:text (session:send session data :start 0 :end end))
+      (:text (progn
+               (format t "Got message: ~a~%"
+                       (flexi-streams:octets-to-string data :end end :external-format :utf-8))
+               (session:send session data :start 0 :end end)))
       (:close (progn
-                (format t "Shuting down socket")
+                (format t "Shuting down socket~%")
                 (usocket:socket-shutdown session :io)
                 (setf (session:status session) :shutdown)))
       (:ping (session/websocket:pong session data :start 0 :end end))

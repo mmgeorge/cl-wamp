@@ -28,13 +28,10 @@
         (make-array bufsize :element-type '(unsigned-byte 8))))
 
 
-(defmethod update-instance-for-different-class :after
-    ((sock usocket:usocket) (self session) &key bufsize)
-  (format t "update instance! ~a" bufsize)
+(defmethod update-instance-for-different-class :after ((sock usocket:usocket) (self session) &key bufsize)
   (unless (socket-stream self)
     (setf (slot-value self 'socket-stream)
           (flexi-streams:make-flexi-stream (usocket:socket-stream sock) :external-format :utf-8)))
-                                        ;(Describe (slot-value self 'socket-stream))
   (unless (buffer self)
     (setf (slot-value self 'buffer)
           (make-array bufsize :element-type '(unsigned-byte 8)))))

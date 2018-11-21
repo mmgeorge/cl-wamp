@@ -59,7 +59,7 @@
   (when (not (listen stream))
       (return-from read-frame))
     (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
-      (format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
+      ;;(format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
       (if (control-frame-p opsym)
           (read-control-frame self stream opsym len mask)
           (read-standard-frame self stream fin opsym len mask))))
@@ -83,9 +83,7 @@
           (if mask
               (read-masked-body stream buffer mask index len)
               (read-body stream buffer index len)))
-    (format t "Got op ~a~%~%message:~% ~a~%" opsym
-            (flexi-streams:octets-to-string buffer :end (1- index) :external-format :utf-8))
-    (format t "Read std frame ~%")
+    ;;(format t "Read std frame ~%")
     (when fin (values (current-op self) buffer (1- index)))))
 
 
@@ -111,9 +109,9 @@
 
 (defun write-header (stream fin opcode len mask rsv)
   (multiple-value-bind (small-len ext-len-bytes) (encode-len len)
-    (format t "~%Got len: ~a small-len ~a ~a~%" len small-len ext-len-bytes)
-    (format t "Writing b1: ~b ~%" (encode-byte-0 fin rsv opcode))
-    (format t "Writing b2: ~b ~%" (encode-byte-1 mask small-len))
+    ;(format t "~%Got len: ~a small-len ~a ~a~%" len small-len ext-len-bytes)
+    ;(format t "Writing b1: ~b ~%" (encode-byte-0 fin rsv opcode))
+    ;(format t "Writing b2: ~b ~%" (encode-byte-1 mask small-len))
     (write-byte (encode-byte-0 fin rsv opcode) stream)
     (write-byte (encode-byte-1 mask small-len) stream)
     (write-len stream len ext-len-bytes)
@@ -125,7 +123,7 @@
         (rsv (ldb (byte 3 4) byte-0))
         (opcode (opcode-symbol (ldb (byte 4 0) byte-0))))
     (unless (or expects-rsv (= rsv 0)) (error "unxpected rsv ~a" rsv))
-    (format t "0-byte:~b fin:~a rsv:~a" byte-0 rsv opcode)
+    ;(format t "0-byte:~b fin:~a rsv:~a" byte-0 rsv opcode)
     (values fin rsv opcode)))
 
 
@@ -163,8 +161,6 @@
 
 
 (defun decode-byte-1 (byte-1)
-    (format t "1-byte:~b" byte-1)
-
   (let ((mask (= 1 (ldb (byte 1 7) byte-1)))
         (len (ldb (byte 7 0) byte-1)))
     (values mask len)))
@@ -174,7 +170,7 @@
   (let ((out 0))
     (when mask (setf (ldb (byte 1 7) out) mask))
     (setf (ldb (byte 7 0) out) len)
-    (format t "encode-byte-1 mask:~a len:~a ~b~%" mask len out)
+    ;(format t "encode-byte-1 mask:~a len:~a ~b~%" mask len out)
     out))
 
 
@@ -188,7 +184,7 @@
 
 
 (defun read-len (stream payload-len)
-  (format t "DECODE LEN ~a"payload-len)
+  ;;(format t "DECODE LEN ~a"payload-len)
   (case payload-len
     (126 (read-2-byte-len stream))
     (127 (read-8-byte-len stream))
@@ -266,8 +262,8 @@
 
 
 (defun write-body (stream data start end)
-  (format t "Writing body!!~%")
-                                        ;(format t "GOT WROTE body ~a!!~%" (subseq data start end))
+  ;;(format t "Writing body!!~%")
+  ;;(format t "GOT WROTE body ~a!!~%" (subseq data start end))
   (write-sequence data stream :start start :end end))
 
 

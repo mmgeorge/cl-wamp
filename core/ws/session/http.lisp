@@ -24,7 +24,7 @@
 
 (defun parser (self)
   (with-slots (parser) self
-    (flet ((cb () (setf (recieved-p self) t) (format t "GOT!! ~%")))
+    (flet ((cb () (setf (recieved-p self) t)))
       (or parser
           (let ((message (if (upgrade-key self)
                              (fast-http:make-http-response)
@@ -36,7 +36,6 @@
                           :header-callback (lambda (headers) (format t "GOT HEAD ~a~%" headers))
                           :body-callback (lambda (data start end)
                                            (let* ((chunk-len (- end start)))
-                                             ;; (format t "Got chunk ~a ~a ~a" data start end)))
                                              (replace (buffer self) data :start1 (index self)
                                                                          :start2 start :end2 end)
                                              (setf (index self)
@@ -106,10 +105,7 @@
 (defun read-socket (self stream)
   (with-accessors ((buffer session::buffer) (request request) (parser parser)) self
     (let ((length (buffered-read stream buffer 0)))
-      (format t "GOT LENGTH OF ~a buf ~a" length buffer)
       (funcall parser buffer :end length)
-      (format t "~a~%" (request self))
-      (format t "HEAD: ~a ~%~% " (fast-http:http-headers (request self)))
       (and (recieved-p self)
            (yield self)))))
 
