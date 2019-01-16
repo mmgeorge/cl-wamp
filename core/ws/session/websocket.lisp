@@ -2,6 +2,7 @@
   (:use :cl :alexandria :wamp/ws/session/session)
   (:import-from :wamp/ws/session/session #:session)
   (:import-from :wamp/ws/session/http #:http)
+  (:import-from :wamp/ws/conditions #:connection-error)
   (:local-nicknames (:session :wamp/ws/session/session))
   (:export #:websocket #:make-websocket #:ping #:pong))
 
@@ -57,8 +58,9 @@
 ;; See https://tools.ietf.org/html/rfc6455#section-5.2
 (defun read-frame (self stream &key (expects-rsv nil))
   (when (not (listen stream))
-      (return-from read-frame))
-    (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
+    (error 'connection-error :session self :name :lost-connection))
+  (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
+    (declare (ignore rsv))
       ;;(format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
       (if (control-frame-p opsym)
           (read-control-frame self stream opsym len mask)
@@ -73,7 +75,7 @@
                         (read-masked-body stream buffer mask 0 len)
                         (read-body stream buffer 0 len))))
         (values opsym buffer (1- index)))
-      (values opsym nil nil )))
+      (values opsym nil nil)))
 
 
 (defun read-standard-frame (self stream fin opsym len mask)
@@ -100,8 +102,8 @@
 
 (defun read-header (stream expects-rsv)
     (multiple-value-bind (fin rsv opcode)
-        (decode-byte-0 (read-byte stream nil nil) expects-rsv)
-      (multiple-value-bind (has-mask payload-len) (decode-byte-1 (read-byte stream nil nil))
+        (decode-byte-0 (read-byte stream ) expects-rsv)
+      (multiple-value-bind (has-mask payload-len) (decode-byte-1 (read-byte stream ))
         (let ((len (read-len stream payload-len))
               (mask (read-mask stream has-mask)))
           (values fin rsv opcode len mask)))))
@@ -201,8 +203,8 @@
 
 (defun read-2-byte-len (stream)
   (let ((out 0))
-    (setf (ldb (byte 8 8) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 0) out) (read-byte stream nil nil))
+    (setf (ldb (byte 8 8) out) (read-byte stream ))
+    (setf (ldb (byte 8 0) out) (read-byte stream ))
     out))
 
 
@@ -213,14 +215,14 @@
 
 (defun read-8-byte-len (stream)
   (let ((out 0))
-    (setf (ldb (byte 8 56) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 48) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 40) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 32) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 24) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 16) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 8) out) (read-byte stream nil nil))
-    (setf (ldb (byte 8 0) out) (read-byte stream nil nil))
+    (setf (ldb (byte 8 56) out) (read-byte stream ))
+    (setf (ldb (byte 8 48) out) (read-byte stream ))
+    (setf (ldb (byte 8 40) out) (read-byte stream ))
+    (setf (ldb (byte 8 32) out) (read-byte stream ))
+    (setf (ldb (byte 8 24) out) (read-byte stream ))
+    (setf (ldb (byte 8 16) out) (read-byte stream ))
+    (setf (ldb (byte 8 8) out) (read-byte stream ))
+    (setf (ldb (byte 8 0) out) (read-byte stream ))
     out))
 
 
@@ -238,10 +240,10 @@
 (defun read-mask (stream has-mask)
   (when has-mask
     (let ((out 0))
-      (setf (ldb (byte 8 24) out) (read-byte stream nil nil))
-      (setf (ldb (byte 8 16) out) (read-byte stream nil nil))
-      (setf (ldb (byte 8 8) out) (read-byte stream nil nil))
-      (setf (ldb (byte 8 0) out) (read-byte stream nil nil))
+      (setf (ldb (byte 8 24) out) (read-byte stream ))
+      (setf (ldb (byte 8 16) out) (read-byte stream ))
+      (setf (ldb (byte 8 8) out) (read-byte stream ))
+      (setf (ldb (byte 8 0) out) (read-byte stream ))
       out)))
 
 
@@ -256,7 +258,7 @@
 (defun read-body (stream buffer start end)
   (loop for i from start below end
         while (listen stream)
-        for byte = (read-byte stream nil nil)
+        for byte = (read-byte stream )
         do (setf (aref buffer i) byte)
         finally (return (1+ i))))
 
@@ -270,7 +272,7 @@
 (defun read-masked-body (stream buffer mask-key start end)
   (loop for i from start below end
         for mask = (ldb (byte 8 (* 8 (- 3 (mod i 4)))) mask-key)
-        for byte = (read-byte stream nil nil)
+        for byte = (read-byte stream )
         for unmasked-byte = (logxor byte mask)
         do (setf (aref buffer i) unmasked-byte)
         finally (return (1+ i))))

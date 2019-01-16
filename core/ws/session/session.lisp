@@ -6,9 +6,7 @@
   (:export #:session #:recieve #:send #:send-error #:protocol #:socket-stream
            #:status #:stop
            #:upgrade-accept #:upgrade-request
-
-           #:index #:buffer
-           ))
+           #:index #:buffer))
 
 (in-package :wamp/ws/session/session)
 

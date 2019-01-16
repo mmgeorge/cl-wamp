@@ -6,41 +6,24 @@
   (:import-from :fast-http)
   (:import-from :ironclad)
   (:import-from :cl-base64)
+  (:import-from :wamp/ws/conditions #:protocol-error #:auth-error #:connection-error)
   (:import-from :wamp/ws/session/session)
   (:import-from :wamp/ws/session/http)
   (:import-from :wamp/ws/session/websocket)
+  (:import-from :wamp/ws/evented #:evented)
   (:local-nicknames (:session :wamp/ws/session/session)
                     (:session/http :wamp/ws/session/http)
-                    (:session/websocket :wamp/ws/session/websocket))
-  (:export #:server))
+                    (:session/websocket :wamp/ws/session/websocket)
+                    (:evented :wamp/ws/evented))
+  (:export #:server #:make-server #:start #:stop #:sockets))
 
 (in-package :wamp/ws/server)
+
 
 (defvar *log-output* *standard-output*)
 
 
-(define-condition protocol-error (error)
-  ((text :initarg :text :reader text)
-   (session :initarg :session :reader session))
-  (:report (lambda (condition stream)
-             (format stream "[~{~a~^.~}:~a] Protocol violation: ~a~%"
-                     (coerce (usocket:get-peer-address (session condition)) 'list)
-                     (usocket:get-peer-port (session condition))
-                     (text condition)))))
-
-
-
-(define-condition auth-error (error)
-  ((text :initarg :text :reader text)
-   (session :initarg :session :reader session))
-  (:report (lambda (condition stream)
-             (format stream "[~{~a~^.~}:~a] Authorization error: ~a~%"
-                     (coerce (usocket:get-peer-address (session condition)) 'list)
-                     (usocket:get-peer-port (session condition))
-                     (text condition)))))
-
-
-(defclass server ()
+(defclass server (evented)
   ((host :reader host :type 'string :initarg :host)
    (port :reader port :type 'fixnum :initarg :port)
    (path :reader path :type 'string :initarg :path)
@@ -50,7 +33,8 @@
    (sockets :accessor sockets :initform nil)
    (thread :accessor thread :initform nil)
    (buffer-size :reader buffer-size :initarg :buffer-size)
-   ))
+   ;; one-of :open, :shutting-down, or :closed
+   (status :accessor status :initform :closed)))
 
 
 (defun make-server (url &key (host nil) (origins nil) (buffer-size 2))
@@ -88,21 +72,29 @@
 
 
 (defmethod start ((self server))
-  (let ((socket (create-socket (host self) (port self)))
-        (os *standard-output*))
-    (setf (sockets self) (list socket))
-    (setf (thread self)
-          (bt:make-thread (lambda () (let* ((*standard-output* os)) (poll self)) :name "acceptor")))
-    self))
+  (with-slots (host port sockets status thread) self
+    (let ((socket (create-socket host port))
+          (os *standard-output*))
+      (unless (eq status :closed)
+        (error "Unable to start server. Status is ~a~%" (status self)))
+      (setf sockets (list socket))
+      (setf status :open)
+      (setf thread (bt:make-thread (lambda () (let* ((*standard-output* os)) (poll self)) :name "acceptor")))
+      self)))
 
 
 (defmethod stop ((self server))
-  (when (running-p self)
-    (when (bt:thread-alive-p (thread self))
-      (bt:destroy-thread (thread self)))
-    (loop for socket in (sockets self) do (usocket:socket-close socket))
-    (setf (sockets self) nil))
-  self)
+  (with-slots (thread sockets status) self
+    (when (eq status :open)
+      (unless (and thread (bt:thread-alive-p thread))
+        (error "Unable to stop server. Polling thread is already destroyed~%"))
+      (setf status :shutting-down)
+      (bt:join-thread thread)
+      (loop for socket in sockets do (usocket:socket-close socket))
+      (setf sockets nil)
+      (setf thread nil)
+      (setf status :closed)))
+    self)
 
 ;; Internal
 
@@ -112,10 +104,6 @@
       (apply #'format *log-output*
              (concatenate 'string "~a/~a/~a ~2,'0d:~2,'0d:~2,'0d UTC " control-string "~%")
              (append (list hour minute second date month year) args)))))
-
-
-(defun running-p (self)
-  (> (length (sockets self)) 1))
 
 
 (defun acceptor (self)
@@ -140,9 +128,12 @@
 
 ;; todo - loop over sessions - if exceeded handshake timeout then kill
 (defun poll (self)
-  (with-slots (sockets) self
+  (with-slots (sockets status) self
     (loop
-      (loop for socket in (usocket:wait-for-input sockets :ready-only t) do
+      (when (eq status :shutting-down)
+        (setf status :closed)
+        (return-from poll))
+      (loop for socket in (usocket:wait-for-input sockets :timeout 0.1 :ready-only t) do
         (cond ((eq socket (acceptor self))
                (push-session self (make-session (usocket:socket-accept socket) (buffer-size self))))
               ((eq (session:status socket) :shutdown) (close-socket self socket))
@@ -159,9 +150,12 @@
 
 (defun safe-handle-session (self session)
   (handler-case (handle-session self session)
-    (protocol-error (condition)
-      (report "~a" condition)
-      (session:send session condition)
+    (protocol-error (e)
+      (evented:handle self e)
+      (session:send session e)
+      (close-socket self session))
+    (connection-error (e)
+      (evented:handle self e)
       (close-socket self session))
     (t (e)
       (report "Got an error ~a closing client" e)
@@ -213,8 +207,8 @@
 
 ;; See https://tools.ietf.org/html/rfc6455#section-4
 (defun check-protocol (self session request headers)
-  (flet ((perror (fmt &rest args)
-           (error 'protocol-error :session session :text (apply #'format nil fmt args))))
+  (flet ((perror (name details)
+           (error 'protocol-error :session session :name name :details details)))
     (let ((method (http-method request))
           (version (http-version request))
           (host (gethash "host" headers))
@@ -224,12 +218,12 @@
           ;; optional
           ;;(user-agent (gethash "user-agent" headers))
           )
-      (cond ((not (eq method :get)) (perror "Invalid method ~a" method))
-            ((not (>= version 1.1)) (perror "Invalid http version ~a" version))
-            ((not (expected-host-p self host)) (perror "Unexpected host ~a" host))
-            ((not (string-equal upgrade "websocket")) (perror "Unexpected upgrade ~a" upgrade))
-            ((not (eq ws-version 13)) (perror "Unsupported websocket version ~a" ws-version))
-            ((null nonce) (perror "Unsupported websocket version ~a" ws-version))
+      (cond ((not (eq method :get)) (perror :invalid-method method))
+            ((not (>= version 1.1)) (perror :invalid-http-version version))
+            ((not (expected-host-p self host)) (perror :unexpected-host host))
+            ((not (string-equal upgrade "websocket")) (perror :unexpected-upgrade upgrade))
+            ((not (eq ws-version 13)) (perror :unsupported-websocket-version ws-version))
+            ((null nonce) (perror :invalid-websocket-key nil))
             (t)))))
 
 
@@ -239,12 +233,12 @@
 
 
 (defun check-auth (self session request headers)
-  (flet ((aerror (fmt &rest args)
-           (error 'auth-error :session session :text (apply #'format nil fmt args))))
+  (flet ((aerror (name details)
+           (error 'auth-error :session session :name name :details details)))
     (let ((origin (gethash "origin" headers))
           (path (uri-path (uri (http-resource request)))))
-      (cond ((not (valid-origin-p self origin)) (aerror "Invalid origin ~a" origin))
-            ((not (string-equal path (path self))) (aerror "Invalid path ~a" path))
+      (cond ((not (valid-origin-p self origin)) (aerror :invalid-origin origin))
+            ((not (string-equal path (path self))) (aerror :invalid-path path))
             (t)))))
 
 
@@ -287,17 +281,16 @@
     (stop *server*)
     (setf *server* nil))
   (sleep 0.150)
-  (let ((os *standard-output*))
     (setf *server* (make-server "ws://0.0.0.0:8081/ws" :host "dev.owny.io"))
     (start *server*)
-    (setf *session* (usocket:socket-connect "localhost" 8081))
-    (setf *session-read-thread*
-          (bt:make-thread
-           (lambda ()
-             (loop
-               (format os "~a" (read-char (usocket:socket-stream *session*) nil nil))))))
+    ;; (setf *session* (usocket:socket-connect "localhost" 8081))
+    ;; (setf *session-read-thread*
+    ;;       (bt:make-thread
+    ;;        (lambda ()
+    ;;          (loop
+    ;;            (format os "~a" (read-char (usocket:socket-stream *session*) nil nil))))))
     *server*
-    ))
+    )
 
 
 (defun write-test-header ()
