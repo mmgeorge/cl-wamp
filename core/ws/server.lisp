@@ -32,6 +32,7 @@
    ;; First socket denotes the master/acceptor socket
    (sockets :accessor sockets :initform nil)
    (thread :accessor thread :initform nil)
+   (main-thread :reader main-thread :initform (bt:current-thread))
    (buffer-size :reader buffer-size :initarg :buffer-size)
    ;; one-of :open, :shutting-down, or :closed
    (status :accessor status :initform :closed)))
@@ -68,7 +69,7 @@
 ;; Exports 
 
 (defgeneric start (server))
-(defgeneric stop (server))
+(defgeneric stop (server &key resolver))
 
 
 (defmethod start ((self server))
@@ -83,18 +84,19 @@
       self)))
 
 
-(defmethod stop ((self server))
-  (with-slots (thread sockets status) self
-    (when (eq status :open)
-      (unless (and thread (bt:thread-alive-p thread))
-        (error "Unable to stop server. Polling thread is already destroyed~%"))
-      (setf status :shutting-down)
-      (bt:join-thread thread)
-      (loop for socket in sockets do (usocket:socket-close socket))
-      (setf sockets nil)
-      (setf thread nil)
-      (setf status :closed)))
-    self)
+(defmethod stop ((self server) &key (resolver nil))
+  (unless (thread self)
+    (error "Unable to stop server. Polling thread is already destroyed~%"))
+  (setf (status self) :shutting-down)
+  (if (not (eq (bt:current-thread) (main-thread self)))
+      (bb:create-promise (lambda (resolve reject)
+                           (declare (ignore reject))
+                           (bt:interrupt-thread (main-thread self) (lambda () (stop self :resolver resolve)))))
+      (progn
+        (bt:join-thread (thread self))
+        (if resolver
+            (funcall resolver self)
+            (bb:promisify self)))))
 
 ;; Internal
 
@@ -131,7 +133,9 @@
   (with-slots (sockets status) self
     (loop
       (when (eq status :shutting-down)
+        (loop for socket in sockets do (usocket:socket-close socket))
         (setf status :closed)
+        (setf sockets nil)
         (return-from poll))
       (loop for socket in (usocket:wait-for-input sockets :timeout 0.1 :ready-only t) do
         (cond ((eq socket (acceptor self))
@@ -151,12 +155,14 @@
 (defun safe-handle-session (self session)
   (handler-case (handle-session self session)
     (protocol-error (e)
-      (evented:handle self e)
+      (report "~a")
       (session:send session e)
-      (close-socket self session))
+      (close-socket self session)
+      (evented:handle self e))
     (connection-error (e)
-      (evented:handle self e)
-      (close-socket self session))
+      (report "~a" e)
+      (close-socket self session)
+      (evented:handle self e))
     (t (e)
       (report "Got an error ~a closing client" e)
       (close-socket self session))))

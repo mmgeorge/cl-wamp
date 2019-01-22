@@ -31,7 +31,8 @@
          (session (change-class sock 'http  :bufsize bufsize))
          (os *standard-output*))
     (session:upgrade-request session)
-    (usocket:wait-for-input session)
+    (unless (usocket:wait-for-input session :timeout 20)
+      (error "Exceeded timeout in initializing client"))
     (multiple-value-bind (response buffer start end) (session:recieve session)
       (case (fast-http:http-status response)
         ;; TODO - Must verify correct upgrade response sent

@@ -1,5 +1,6 @@
 (defpackage :wamp/ws/evented
   (:use :cl :blackbird)
+  (:import-from :bordeaux-threads)
   (:export #:evented #:event #:condition-event
            #:handle #:next  #:*event-output-stream* ))
 
@@ -35,15 +36,23 @@
 
 
 (defclass evented ()
-  ((resolver :accessor resolver)))
+  ((resolvers :accessor resolvers :initform nil)
+   (lock :reader lock :initform (bt:make-lock "resolver-lock"))))
 
 
 (defmethod next ((self evented))
-  (create-promise
-   (lambda (resolver rejector)
-     (declare (ignore rejector))
-     (setf (resolver self) resolver))))
+  (bt:with-lock-held ((lock self))
+    (create-promise
+     (lambda (resolver rejector)
+       (declare (ignore rejector))
+       (setf (resolvers self)
+             (nconc (resolvers self) (list resolver)))))))
+     
 
 
 (defmethod handle ((self evented) event)
-  (print-event event))
+  (bt:with-lock-held ((lock self))
+    (loop for resolver in (resolvers self) do
+      (progn 
+      (funcall resolver event)))
+    (setf (resolvers self) nil)))

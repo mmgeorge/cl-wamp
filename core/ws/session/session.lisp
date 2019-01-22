@@ -32,7 +32,8 @@
           (flexi-streams:make-flexi-stream (usocket:socket-stream sock) :external-format :utf-8)))
   (unless (buffer self)
     (setf (slot-value self 'buffer)
-          (make-array bufsize :element-type '(unsigned-byte 8)))))
+          (make-array bufsize :element-type '(unsigned-byte 8))))
+  )
 
 
 (defgeneric upgrade-request (self))
