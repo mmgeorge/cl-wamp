@@ -1,6 +1,8 @@
 (defpackage :wamp/ws/evented
   (:use :cl :blackbird)
   (:import-from :bordeaux-threads)
+  (:import-from :wamp/ws/session/session)
+  (:local-nicknames (:session :wamp/ws/session/session))
   (:export #:evented #:event #:condition-event
            #:handle #:next  #:*event-output-stream* ))
 
@@ -11,14 +13,14 @@
 
 
 (defclass event ()
-  ((timestamp :reader timestampe :initform (get-decoded-time))
+  ((timestamp :reader timestamp :initform (get-universal-time))
    (name :initarg :name :reader name)
-   (details :initarg :details :reader details)
+   (details :initarg :details :reader details :initform nil)
    (session :initarg :session :reader session)))
 
 
 (define-condition condition-event ()
-  ((timestamp :reader timestamp :initform (get-decoded-time))
+  ((timestamp :reader timestamp :initform (get-universal-time))
    (name :initarg :name :reader name)
    (details :initarg :details :reader details :initform nil)
    (session :initarg :session :reader session))
@@ -27,12 +29,14 @@
 
 
 (defmethod print-event (event &key (stream *event-output-stream*))
-  (format stream "[~{~a~^.~}:~a] ~a: ~a ~a~%"
-          (coerce (usocket:get-peer-address (session event)) 'list)
-          (usocket:get-peer-port (session event))
+  (multiple-value-bind (second minute hour date month year) (decode-universal-time (timestamp event))
+  (format stream "~a/~a/~a ~2,'0d:~2,'0d:~2,'0d UTC [~{~a~^.~}:~a] ~a: ~a ~a~%"
+          hour minute second date month year
+          (coerce (session:address (session event)) 'list)
+          (session:port (session event))
           (type-of event)
           (name event)
-          (if (details event) (details event) "")))
+          (if (details event) (details event) ""))))
 
 
 (defclass evented ()
@@ -51,8 +55,10 @@
 
 
 (defmethod handle ((self evented) event)
+  (print-event event)
   (bt:with-lock-held ((lock self))
     (loop for resolver in (resolvers self) do
       (progn 
       (funcall resolver event)))
     (setf (resolvers self) nil)))
+

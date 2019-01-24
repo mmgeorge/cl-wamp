@@ -6,7 +6,8 @@
   (:export #:session #:recieve #:send #:send-error #:protocol #:socket-stream
            #:status #:stop
            #:upgrade-accept #:upgrade-request
-           #:index #:buffer))
+           #:index #:buffer
+           #:port #:address))
 
 (in-package :wamp/ws/session/session)
 
@@ -16,6 +17,8 @@
    (status :accessor status :initform :open)
    (buffer :accessor buffer :initform nil)
    (index :accessor index :initform 0)
+   (port :accessor port)
+   (address :accessor address)
    ))
 
 
@@ -33,7 +36,10 @@
   (unless (buffer self)
     (setf (slot-value self 'buffer)
           (make-array bufsize :element-type '(unsigned-byte 8))))
-  )
+  (setf (slot-value self 'port)
+        (usocket:get-peer-port self))
+  (setf (slot-value self 'address)
+        (usocket:get-peer-address self)))
 
 
 (defgeneric upgrade-request (self))

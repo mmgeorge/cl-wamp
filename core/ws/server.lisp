@@ -116,9 +116,10 @@
   (usocket:socket-listen host port :element-type '(unsigned-byte 8) :reuse-address t))
 
 
-(defun make-session (socket bufsize)
-  (format t "Accepted a new session ~a~%" socket)
-  (change-class socket 'session/http:http :bufsize bufsize))
+(defun make-session (self socket bufsize)
+  (change-class socket 'session/http:http :bufsize bufsize)
+  (evented:handle self (make-instance 'evented:event :session socket :name :accept-session ))
+  socket)
 
 
 (defun push-session (self session)
@@ -139,7 +140,7 @@
         (return-from poll))
       (loop for socket in (usocket:wait-for-input sockets :timeout 0.1 :ready-only t) do
         (cond ((eq socket (acceptor self))
-               (push-session self (make-session (usocket:socket-accept socket) (buffer-size self))))
+               (push-session self (make-session self (usocket:socket-accept socket) (buffer-size self))))
               ((eq (session:status socket) :shutdown) (close-socket self socket))
               (t (safe-handle-session self socket)))))))
 
@@ -155,12 +156,10 @@
 (defun safe-handle-session (self session)
   (handler-case (handle-session self session)
     (protocol-error (e)
-      (report "~a")
       (session:send session e)
       (close-socket self session)
       (evented:handle self e))
     (connection-error (e)
-      (report "~a" e)
       (close-socket self session)
       (evented:handle self e))
     (t (e)

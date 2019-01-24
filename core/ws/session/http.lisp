@@ -33,7 +33,6 @@
             (setf (message self) message)
             (setf parser (fast-http:make-parser
                           message
-                          :header-callback (lambda (headers) (format t "GOT HEAD ~a~%" headers))
                           :body-callback (lambda (data start end)
                                            (let* ((chunk-len (- end start)))
                                              (replace (buffer self) data :start1 (index self)
