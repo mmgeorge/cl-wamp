@@ -7,8 +7,9 @@
   (:import-from :wamp/ws/session/http #:http)
   (:import-from :wamp/ws/session/websocket #:websocket)
   (:import-from :wamp/ws/session/session #:session)
-  (:local-nicknames (:session :wamp/ws/session/session))
-  (:export #:client #:recieve #:send #:destroy))
+  (:local-nicknames (:session :wamp/ws/session/session)
+                    (:session/websocket :wamp/ws/session/websocket))
+  (:export #:client #:recieve-text #:recieve-binary #:send #:destroy))
 
 (in-package :wamp/ws/client)
 
@@ -21,8 +22,10 @@
    (status :accessor status :initform :open)))
 
 
-(defgeneric recieve (self message &key))
+;(defgeneric recieve (self message &key))
 (defgeneric send (self message &key))
+(defgeneric recieve-binary (self buffer end &key))
+(defgeneric recieve-text (self text &key))
 
 
 (defmethod initialize-instance :after ((self client) &key host port (bufsize 1024))
@@ -32,27 +35,34 @@
          (os *standard-output*))
     (session:upgrade-request session)
     (unless (usocket:wait-for-input session :timeout 20)
+            (format t "exceeded timeout~%")
+      (session:stop session)
       (error "Exceeded timeout in initializing client"))
     (multiple-value-bind (response buffer start end) (session:recieve session)
       (case (fast-http:http-status response)
         ;; TODO - Must verify correct upgrade response sent
-        
         (101 (setf (slot-value self 'session) (change-class sock 'websocket)))
-        (t (error
-            "Unable to establish connection, encountered ~a:~%   ~a~%"
-            (fast-http:http-status response)
-            (flexi-streams:octets-to-string buffer :start start :end end :external-format :utf-8)))))
+        (t (progn
+             (session:stop session)
+             (error
+              "Unable to establish connection, encountered ~a:~%   ~a~%"
+              (fast-http:http-status response)
+              (flexi-streams:octets-to-string buffer :start start :end end :external-format :utf-8))))))
     (setf (thread self) (bt:make-thread (lambda ()
                                           (let ((*standard-output* os))
                                             (poll self)))))))
 
 
-(defmethod recieve ((self client) message &key)
-  (declare (ignore self))
-  (destructuring-bind (type buffer end) message
-    (declare (ignore type))
-    (format t "Client: You got mail! ~a~%"
-            (flexi-streams:octets-to-string buffer :start 0 :end end :external-format :utf-8))))
+(defun destroy (self)
+  (when (eq (status self) :open)
+    (with-slots (thread) self
+      (unless (and thread (bt:thread-alive-p thread))
+        (error "Unable to destroy client. Polling thread is already destroyed~%"))
+      (setf (status self) :shutting-down)
+      (unless (eq (bt:current-thread)
+                  (thread self))
+        (loop until (eq (status self) :closed)))
+      (setf (thread self) nil))))
 
 
 (defun poll (self)
@@ -66,20 +76,18 @@
         (unless (eq (Status self) :shutting-down)
         (when-let (message (session:recieve session))
           ;(bt:interrupt-thread (main-thread self) #'(lambda () (funcall #'recieve self message)))
-          (funcall #'recieve self message )
+          (process-message self message )
           ))))))
-  
 
-(defun destroy (self)
-  (when (eq (status self) :open)
-    (with-slots (thread) self
-      (unless (and thread (bt:thread-alive-p thread))
-        (error "Unable to destroy client. Polling thread is already destroyed~%"))
-      (setf (status self) :shutting-down)
-      (unless (eq (bt:current-thread)
-                  (thread self))
-        (loop until (eq (status self) :closed)))
-      (setf (thread self) nil))))
+
+(defun process-message (self message)
+  (destructuring-bind (opsym data end) message
+    (case opsym
+      (:binary (recieve-binary self data end))
+      (:text (recieve-text self (flexi-streams:octets-to-string data :end end :external-format :utf-8)))
+      (:close (destroy self))
+      (:ping (session/websocket:pong (session self) data :start 0 :end end))
+      (:pong (format t "Got pong with body ~a (end:~a)~%" data end)))))
 
 
 (defmethod send ((self client) (message simple-array) &key)

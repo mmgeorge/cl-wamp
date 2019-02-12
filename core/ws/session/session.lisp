@@ -47,9 +47,6 @@
 (defgeneric recieve (self))
 (defgeneric send (self data &key start end))
 
-;; (defun send-error (self message)
-;;   (protocol:send-error (protocol self) (socket-stream self) message))
-
 
 (defun stop (self)
   (let ((stream (socket-stream self)))

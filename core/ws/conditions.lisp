@@ -6,6 +6,6 @@
 (in-package :wamp/ws/conditions)
 
 
-(define-condition protocol-error (condition-event) ())
-(define-condition auth-error (condition-event) ())
-(define-condition connection-error (condition-event) ())
+(define-condition protocol-error (condition-event error) ())
+(define-condition auth-error (condition-event error) ())
+(define-condition connection-error (condition-event error) ())

@@ -25,7 +25,10 @@
    (details :initarg :details :reader details :initform nil)
    (session :initarg :session :reader session))
   (:report (lambda (condition stream)
-             (print-event condition :stream stream))))
+             (format stream "~a: ~a ~a~%"
+                     (type-of condition)
+                     (name condition)
+                     (if (details condition) (details condition) "")))))
 
 
 (defmethod print-event (event &key (stream *event-output-stream*))
