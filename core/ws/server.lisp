@@ -32,6 +32,8 @@
    ;; First socket denotes the master/acceptor socket
    (sockets :accessor sockets :initform nil)
    (thread :accessor thread :initform nil)
+   (tcp-server :accessor tcp-server :initform nil)
+   
    (main-thread :reader main-thread :initform (bt:current-thread))
    (buffer-size :reader buffer-size :initarg :buffer-size)
    ;; one-of :open, :shutting-down, or :closed
@@ -52,125 +54,78 @@
                            :buffer-size buffer-size)))
 
 
-
-;; (defun make-connect (host port &key bufsize)
-;;   "Make a new session by connecting to the the target HOST on the given PORT"
-;;   (let* ((socket (usocket:socket-connect host port))
-;;          (session (make-session socket :bufsize bufsize)))
-;;     (upgrade-request session)))
-
-
-;; (defun make-accept (acceptor &key bufsize)
-;;   "Make a new session by accepting a new socket for the given ACCEPTOR"
-;;   (let ((socket (usocket:socket-accept acceptor)))
-;;     (make-session socket :bufsize bufsize)))
-
-
 ;; Exports 
 
 (defgeneric start (server))
-(defgeneric stop (server &key resolver))
+(defgeneric stop (server))
+(defgeneric recieve-client (server session stream))
 
+;; Server lifecycle
+
+(defvar *my-sock* nil)
 
 (defmethod start ((self server))
-  (with-slots (host port sockets status thread) self
-    (let ((socket (create-socket host port))
-          (os *standard-output*))
-      (unless (eq status :closed)
-        (error "Unable to start server. Status is ~a~%" (status self)))
-      (setf sockets (list socket))
-      (setf status :open)
-      (setf thread (bt:make-thread (lambda () (let* ((*standard-output* os)) (poll self)) :name "acceptor")))
+  (when (tcp-server self)
+    (error "Cannot start server as it is already started!~%"))
+  (flet ((read-cb (socket stream) (recieve-client self socket stream))
+         (connect-cb (socket) (accept-client self socket)))
+    (with-slots (host port) self
+      (setf (tcp-server self)
+            (as:tcp-server host port #'read-cb :connect-cb #'connect-cb :stream t))
       self)))
 
+(defmethod stop ((self server))
+  (unless (tcp-server self)
+    (error "Cannot stop server as it is not started!~%"))
+  (with-slots (tcp-server sockets) self
+    (as:close-tcp-server tcp-server)
+    (setf tcp-server nil)
+    (setf sockets nil)))
 
-(defmethod stop ((self server) &key (resolver nil))
-  (unless (thread self)
-    (error "Unable to stop server. Polling thread is already destroyed~%"))
-  (setf (status self) :shutting-down)
-  (if (not (eq (bt:current-thread) (main-thread self)))
-      (bb:create-promise (lambda (resolve reject)
-                           (declare (ignore reject))
-                           (bt:interrupt-thread (main-thread self) (lambda () (stop self :resolver resolve)))))
-      (progn
-        (bt:join-thread (thread self))
-        (if resolver
-            (funcall resolver self)
-            (bb:promisify self)))))
+
+;; Session lifecycle
+
+(defmethod accept-client (self socket-wrapper)
+  (let ((socket (as:streamish socket-wrapper)))
+    (setf (as:socket-data socket)  ;; store session in socket-data
+          (make-session self socket (buffer-size self)))))
+
+(defun make-session (self socket bufsize)
+  (let ((session (make-instance 'session/http:http :socket socket :bufsize bufsize)))
+    ;;(change-class socket 'session/http:http :bufsize bufsize)
+    (evented:handle self (make-instance 'evented:event :session session :name :accept-session ))
+    session))
+
+
+(defun close-session (self session)
+  (declare (ignore self))
+  (let ((socket (session:socket session)))
+    (setf (as:socket-data socket) nil)
+    (as:close-socket socket)))
+
+;; Session message handling
+
+(defmethod recieve-client (self socket-wrapper stream)
+  (let* ((socket (as:streamish socket-wrapper))
+         (session (as:socket-data socket)))
+    (setf (session:socket-stream session)
+          (flexi-streams:make-flexi-stream stream :external-format :utf-8))
+    (handler-case (handle-session self session)
+      (protocol-error (e)
+        (session:send session e)
+        (close-session self session)
+        (evented:handle self e))
+      (connection-error (e)
+        (close-session self session)
+        (evented:handle self e))
+      (t (e)
+        (report "Got an error ~a closing client" e)
+        (close-session self session)))))
 
 ;; Internal
 
-(defun report (control-string &rest args)
-  (when *log-output*
-    (multiple-value-bind (second minute hour date month year) (get-decoded-time)
-      (apply #'format *log-output*
-             (concatenate 'string "~a/~a/~a ~2,'0d:~2,'0d:~2,'0d UTC " control-string "~%")
-             (append (list hour minute second date month year) args)))))
-
-
-(defun acceptor (self)
-  (car (sockets self)))
-
-
-(defun create-socket (host port)
-  (usocket:socket-listen host port :element-type '(unsigned-byte 8) :reuse-address t))
-
-
-(defun make-session (self socket bufsize)
-  (change-class socket 'session/http:http :bufsize bufsize)
-  (evented:handle self (make-instance 'evented:event :session socket :name :accept-session ))
-  socket)
-
-
-(defun push-session (self session)
-  (with-slots (sockets) self
-    (push session (cdr (last sockets)))))
-
-
-;; for works a special debug print that reference *worker-number* of some sort ? 
-
-;; todo - loop over sessions - if exceeded handshake timeout then kill
-(defun poll (self)
-  (with-slots (sockets status) self
-    (loop
-      (when (eq status :shutting-down)
-        (loop for socket in sockets do (usocket:socket-close socket))
-        (setf status :closed)
-        (setf sockets nil)
-        (return-from poll))
-      (loop for socket in (usocket:wait-for-input sockets :timeout 0.1 :ready-only t) do
-        (cond ((eq socket (acceptor self))
-               (push-session self (make-session self (usocket:socket-accept socket) (buffer-size self))))
-              ((eq (session:status socket) :shutdown) (close-socket self socket))
-              (t (safe-handle-session self socket)))))))
-
-
-;; Dispatch message handling
-
-(defun close-socket (self socket)
-  (session:stop socket)
-  (setf (sockets self)
-        (delete socket (sockets self))))
-
-
-(defun safe-handle-session (self session)
-  (handler-case (handle-session self session)
-    (protocol-error (e)
-      (session:send session e)
-      (close-socket self session)
-      (evented:handle self e))
-    (connection-error (e)
-      (close-socket self session)
-      (evented:handle self e))
-    (t (e)
-      (report "Got an error ~a closing client" e)
-      (close-socket self session))))
-
-
 (defun handle-session (self session)
-  ;; session:recieve returns nil or message when the message has been fully read
   (when-let ((data (session:recieve session)))
-    ;;(format t "GOT A MESSAGE .... HANDLING IT~%")
     (handle-message self session data)))
 
 
@@ -180,14 +135,6 @@
     (session/websocket:websocket (process-message self session data))))
 
 
-(defun write-to-stream (stream src &optional (start 0) end)
-  (let ((end (or end (length src))))
-    (loop for i from start to end
-          for byte = (aref src i)
-          do (write-byte byte stream))
-    (force-output stream)))
-
-
 ;; Handshake (http)
 
 (defun process-handshake (self session request)
@@ -195,8 +142,7 @@
     (when (and (check-protocol self session request headers)
                (check-auth self session request headers))
       (session:upgrade-accept session request)
-      (change-class session 'session/websocket:websocket)
-      )))
+      (change-class session 'session/websocket:websocket))))
 
 
 ;; -> nil | string
@@ -250,7 +196,6 @@
 ;; Websocket message handling
 
 (defun process-message (self session message)
-  (declare (ignore self))
   ;;(format t "procing message type ~a~%" (car message))
   (destructuring-bind (opsym data end) message
     (case opsym
@@ -260,11 +205,42 @@
                        (flexi-streams:octets-to-string data :end end :external-format :utf-8))
                (session:send session data :start 0 :end end)))
       (:close (progn
-                (format t "Shuting down socket~%")
-                (usocket:socket-shutdown session :io)
+                (format t "Shutting down socket~%")
+                (close-session self session)
                 (setf (session:status session) :shutdown)))
       (:ping (session/websocket:pong session data :start 0 :end end))
       (:pong (format t "Got pong with body ~a (end:~a)~%" data end)))))
+
+
+(defun report (control-string &rest args)
+  (when *log-output*
+    (multiple-value-bind (second minute hour date month year) (get-decoded-time)
+      (apply #'format *log-output*
+             (concatenate 'string "~a/~a/~a ~2,'0d:~2,'0d:~2,'0d UTC " control-string "~%")
+             (append (list hour minute second date month year) args)))))
+
+
+;; (defun acceptor (self)
+;;   (car (sockets self)))
+
+
+;; todo - loop over sessions - if exceeded handshake timeout then kill
+;; (defun poll (self)
+;;   (with-slots (sockets status) self
+;;     (loop
+;;       (when (eq status :shutting-down)
+;;         (loop for socket in sockets do (usocket:socket-close socket))
+;;         (setf status :closed)
+;;         (setf sockets nil)
+;;         (return-from poll))
+;;       (loop for socket in (usocket:wait-for-input sockets :timeout 0.1 :ready-only t) do
+;;         (cond ((eq socket (acceptor self))
+;;                (push-session self (make-session self (usocket:socket-accept socket) (buffer-size self))))
+;;               ((eq (session:status socket) :shutdown) (close-socket self socket))
+;;               (t (safe-handle-session self socket)))))))
+
+
+;; Dispatch message handling
 
 
 
@@ -275,27 +251,19 @@
 (defvar *session-read-thread* nil)
 
 (defun test ()
-  (when *session-read-thread*
-    (when (bt:thread-alive-p *session-read-thread*)
-          (bt:destroy-thread *session-read-thread*))
-    (setf *session-read-thread* nil))
-  (when *session*
-    (usocket:socket-close *session*)
-    (setf *session* nil))
   (when *server*
     (stop *server*)
     (setf *server* nil))
   (sleep 0.150)
-    (setf *server* (make-server "ws://0.0.0.0:8081/ws" :host "dev.owny.io"))
-    (start *server*)
+  (setf *server* (make-server "ws://0.0.0.0:8081/ws" :host "dev.owny.io"))
+  (start *server*)
     ;; (setf *session* (usocket:socket-connect "localhost" 8081))
     ;; (setf *session-read-thread*
     ;;       (bt:make-thread
     ;;        (lambda ()
     ;;          (loop
     ;;            (format os "~a" (read-char (usocket:socket-stream *session*) nil nil))))))
-    *server*
-    )
+    *server*)
 
 
 (defun write-test-header ()

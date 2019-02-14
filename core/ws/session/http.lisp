@@ -45,14 +45,14 @@
 
 
 (defmethod session:recieve ((self http))
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (cond ((upgrade-key self)
            (read-socket self stream))
           (t (read-socket self stream)))))
 
 
 (defmethod session:upgrade-request ((self http))
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (format stream "GET /ws HTTP/1.1~c~c" #\return #\newline)
     (format stream "Host: dev.owny.io:8081~c~c" #\return #\newline)
     (format stream "Upgrade: websocket~c~c" #\return #\newline)
@@ -65,7 +65,7 @@
 
 
 (defmethod session:upgrade-accept ((self http) request)
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (let* ((headers (fast-http:http-headers request))
            (nonce (gethash "sec-websocket-key" headers))
            (key (concatenate 'string nonce %accept-key))
@@ -85,7 +85,7 @@
 
 (defmethod session:send ((self http) (condition error) &key start end)
   (declare (ignore start end))
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (let ((message (format nil "~a" condition)))
       (format stream "HTTP/1.1 400 Bad Request~c~c" #\return #\newline)
       (format stream "Server: cl-wamp~c~c" #\return #\newline)
@@ -132,9 +132,11 @@
 
 
 (defun buffered-read (stream buffer start)
-  (loop while (listen stream)
-        for i from start to (length buffer)
-        for byte =  (read-byte stream nil nil)
-        do (setf (aref buffer i) byte)
-        finally (return (1+ i))))
+  (read-sequence buffer stream :start start))
+  
+  ;; (loop while (listen stream)
+  ;;       for i from start to (length buffer)
+  ;;       for byte =  (read-byte stream nil nil)
+  ;;       do (setf (aref buffer i) byte)
+  ;;       finally (return (1+ i))))
 

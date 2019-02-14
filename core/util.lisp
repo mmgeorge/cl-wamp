@@ -2,13 +2,28 @@
   (:use :cl)
   (:import-from :blackbird #:create-promise)
   (:import-from :lparallel #:future)
+  (:import-from :cl-async)
   (:export #:with-timed-promise
            #:timeout-exceeded
            #:promise-of
            #:define-ftype
-           #:defunx))
+           #:defunx
+           #:start-event-loop))
 
 (in-package :wamp/util)
+
+
+(defun start-event-loop ()
+  (progn
+    (slynk-mrepl::send-prompt slynk-mrepl:*repl*)
+    (as:start-event-loop
+     (lambda ()
+       (as:add-event-loop-exit-callback
+        #'(lambda ()
+            (format t "Event loop exited..~%")))
+       (as:idle
+        (lambda ()
+          (slynk::handle-requests (slynk::default-connection) t)))))))
 
 
 (unless lparallel:*kernel*

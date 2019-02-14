@@ -22,7 +22,7 @@
 ;; Exports
 
 (defmethod session:recieve ((self websocket))
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (when-let ((message (multiple-value-list (read-frame self stream))))
       (when (car message)
         (reset self)
@@ -30,17 +30,17 @@
 
 
 (defmethod session:send ((self websocket) data &key start end)
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (write-frame stream :text data :start start :end end :use-mask (mask-frames-p self))))
 
 
 (defmethod ping ((self websocket) buffer &key start end)
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (write-frame stream :ping buffer :start start :end end :start 0 :end 1)))
 
 
 (defmethod pong ((self websocket) buffer &key start end)
-  (with-slots ((stream session::socket-stream)) self
+  (with-accessors ((stream session::socket-stream)) self
     (write-frame stream :pong buffer :start start :end end)))
 
 
@@ -57,8 +57,8 @@
 
 ;; See https://tools.ietf.org/html/rfc6455#section-5.2
 (defun read-frame (self stream &key (expects-rsv nil))
-  (when (not (listen stream))
-    (error 'connection-error :session self :name :lost-connection))
+  ;;(when (not (listen stream))
+  ;; (error 'connection-error :session self :name :lost-connection))
   (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
     (declare (ignore rsv))
       ;;(format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
@@ -79,7 +79,7 @@
 
 
 (defun read-standard-frame (self stream fin opsym len mask)
-  (with-slots ((index session::index) (buffer session::buffer)) self 
+  (with-accessors ((index session::index) (buffer session::buffer)) self 
     (setf (current-op self) opsym)
     (setf (index self)
           (if mask
@@ -256,11 +256,12 @@
 
 
 (defun read-body (stream buffer start end)
-  (loop for i from start below end
-        while (listen stream)
-        for byte = (read-byte stream )
-        do (setf (aref buffer i) byte)
-        finally (return (1+ i))))
+  (read-sequence buffer stream :start start :end end))
+  ;; (loop for i from start below end
+  ;;       while (listen stream)
+  ;;       for byte = (read-byte stream )
+  ;;       do (setf (aref buffer i) byte)
+  ;;       finally (return (1+ i))))
 
 
 (defun write-body (stream data start end)
