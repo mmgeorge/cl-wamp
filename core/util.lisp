@@ -8,7 +8,8 @@
            #:promise-of
            #:define-ftype
            #:defunx
-           #:start-event-loop))
+           #:start-event-loop
+           #:create-resolver #:resolver #:resolver-promise #:resolver-resolve-fn #:resolver-reject-fn))
 
 (in-package :wamp/util)
 
@@ -30,6 +31,24 @@
   (setf lparallel:*kernel* (lparallel:make-kernel 2)))
 
 
+(defstruct resolver
+  resolve-fn
+  reject-fn
+  promise)
+
+
+(defun create-resolver ()
+  (let* (resolve-fn
+         reject-fn
+         (promise
+           (create-promise
+            (lambda (resolve reject)
+              (setf resolve-fn resolve)
+              (setf reject-fn reject)))))
+    (make-resolver :promise promise :resolve-fn resolve-fn :reject-fn reject-fn)))
+
+
+    
 (defmacro local-nicknames (&body body)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
      ,@(loop for (package nickname) on body by #'cddr

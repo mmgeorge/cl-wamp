@@ -103,6 +103,15 @@
     (setf (as:socket-data socket) nil)
     (as:close-socket socket)))
 
+
+;; (defmacro with-bound-stream (session stream &body body)
+;;   `(progn 
+;;      (setf (session:socket-stream ,session)
+;;            (flexi-streams:make-flexi-stream ,stream :external-format :utf-8))
+;;      ,@body
+;;      (setf (session:socket-stream ,session) nil)))
+        
+
 ;; Session message handling
 
 (defmethod recieve-client (self socket-wrapper stream)

@@ -17,8 +17,8 @@
    (buffer :accessor buffer :initform nil)
    (index :accessor index :initform 0)
    (family :accessor family)
-   (port :accessor port)
-   (address :accessor address)
+   (port :accessor port :initform 0)
+   (address :accessor address :initform #(0 0 0 0))
    (socket :accessor socket)
    (stream :accessor socket-stream))) ;; set by server on read-cb
 
@@ -29,10 +29,15 @@
 (defgeneric send (self data &key start end))
 
 
-(defmethod initialize-instance :after ((self session) &key socket bufsize)
+(defmethod initialize-instance :after ((self session) &key socket bufsize (server-sock t))
   (setf (socket self) socket)
   (setf (buffer self) (make-array bufsize :element-type '(unsigned-byte 8)))
-  (set-peername self socket))
+
+  ;; make peer name a getter instead? 
+  ;(when server-sock
+   ; (set-peername self socket))
+
+  )
 
 
 ;; (defmethod update-instance-for-different-class :after ((sock as:async-io-stream) (self session) &key bufsize)
