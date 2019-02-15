@@ -71,15 +71,14 @@
   ;; cl-async returns a async-io-stream as a "socket"
   ;; (as:streamish io-stream) includes the tcp-socket, and
   ;; (as:socket-c streamish) holds the actual libuv socket
-  (cffi:with-foreign-object (addr '(:struct uv:sockaddr-storage))
-    (cffi:with-foreign-pointer (namelen (cffi:foreign-type-size 'uv:socklen-t))
+  (cffi:with-foreign-objects ((addr '(:struct uv:sockaddr-storage)) (namelen 'uv:socklen-t))
       (setf (cffi:mem-ref namelen 'uv:socklen-t) ;; use socketlen_t
             (cffi:foreign-type-size '(:struct uv:sockaddr-storage)))  
       (uv:uv-tcp-getpeername (as:socket-c sock) addr namelen)
       (let ((ss-family (cffi:foreign-slot-value addr '(:struct uv:sockaddr-storage) 'uv:ss-family)))
         (ecase (read-ss-family ss-family)
           (:AF_INET (set-ip4-peername self addr))
-          (:AF_INET6 (set-ip6-peername self addr)))))))
+          (:AF_INET6 (set-ip6-peername self addr))))))
 
 
 (defun set-ip4-peername (self addr)
