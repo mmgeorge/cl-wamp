@@ -16,7 +16,8 @@
 
 
 (defgeneric send (self data &key start end))
-(defgeneric pong (self data &key start end))
+(defgeneric pong (self data-or-nil &key start end))
+(defgeneric ping (self data-or-nil &key start end))
 
 
 ;; Exports
@@ -29,19 +30,29 @@
         message))))
 
 
-(defmethod session:send ((self websocket) data &key start end)
+(defmethod session:send-text ((self websocket) data &key start end)
   (with-accessors ((stream session::socket-stream)) self
     (write-frame stream :text data :start start :end end :use-mask (mask-frames-p self))))
 
 
-(defmethod ping ((self websocket) buffer &key start end)
+(defmethod session:send-binary ((self websocket) data &key start end)
   (with-accessors ((stream session::socket-stream)) self
-    (write-frame stream :ping buffer :start start :end end :start 0 :end 1)))
+    (write-frame stream :binary data :start start :end end :use-mask (mask-frames-p self))))
 
 
-(defmethod pong ((self websocket) buffer &key start end)
+(defmethod ping ((self websocket) data-or-nil &key (start 0) end)
+  (write-ping-pong-frame self :ping data-or-nil :start start :end end))
+
+
+(defmethod pong ((self websocket) data-or-nil &key (start 0) end)
+  (write-ping-pong-frame self :pong data-or-nil :start start :end end))
+
+
+(defun write-ping-pong-frame (self opsym buffer &key start end)
   (with-accessors ((stream session::socket-stream)) self
-    (write-frame stream :pong buffer :start start :end end)))
+    (if buffer
+        (write-frame stream opsym buffer :start start :end end)
+        (write-frame stream opsym nil :start 0 :end 0))))
 
 
 ;; Internal
@@ -61,7 +72,7 @@
   ;; (error 'connection-error :session self :name :lost-connection))
   (multiple-value-bind (fin rsv opsym len mask) (read-header stream expects-rsv)
     (declare (ignore rsv))
-      ;;(format t "Got fin:~a rsv:~a opsym:~a len:~a mask~a~%" fin rsv opsym len mask)
+      ;;(format t "Got fin:~a opsym:~a len:~a mask~a~%" fin opsym len mask)
       (if (control-frame-p opsym)
           (read-control-frame self stream opsym len mask)
           (read-standard-frame self stream fin opsym len mask))))
@@ -69,12 +80,13 @@
 
 (defun read-control-frame (self stream opsym len mask)
   (declare (ignore self))
+  ;;(format t "Reading control frame ~A: ~A~%" opsym len)
   (if (> len 0)
       (let* ((buffer (make-array len :element-type '(unsigned-byte 8)))
              (index (if mask
                         (read-masked-body stream buffer mask 0 len)
                         (read-body stream buffer 0 len))))
-        (values opsym buffer (1- index)))
+        (values opsym buffer index))
       (values opsym nil nil)))
 
 
@@ -86,13 +98,14 @@
               (read-masked-body stream buffer mask index len)
               (read-body stream buffer index len)))
     ;;(format t "Read std frame ~%")
-    (when fin (values (current-op self) buffer (1- index)))))
+    (when fin (values (current-op self) buffer index))))
 
 
-(defun write-frame (stream opsym data &key start end (rsv nil) use-mask)
-  (let ((fin t)
-        (len (- end start))
-        (mask (and use-mask (random 2147483647))))
+(defun write-frame (stream opsym data &key (start 0) end (rsv nil) use-mask)
+  (let* ((fin t)
+         (end (or end (length data)))
+         (len (- end start))
+         (mask (and use-mask (random 2147483647))))
     (write-header stream fin opsym len mask rsv)
     (if mask
         (error "Writing masked frames is not currently support")
@@ -257,16 +270,9 @@
 
 (defun read-body (stream buffer start end)
   (read-sequence buffer stream :start start :end end))
-  ;; (loop for i from start below end
-  ;;       while (listen stream)
-  ;;       for byte = (read-byte stream )
-  ;;       do (setf (aref buffer i) byte)
-  ;;       finally (return (1+ i))))
 
 
 (defun write-body (stream data start end)
-  ;;(format t "Writing body!!~%")
-  ;;(format t "GOT WROTE body ~a!!~%" (subseq data start end))
   (write-sequence data stream :start start :end end))
 
 

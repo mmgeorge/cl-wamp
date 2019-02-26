@@ -9,7 +9,8 @@
            #:define-ftype
            #:defunx
            #:start-event-loop
-           #:create-resolver #:resolver #:resolver-promise #:resolver-resolve-fn #:resolver-reject-fn))
+           #:create-resolver #:resolver #:resolver-promise #:resolver-resolve-fn #:resolver-reject-fn
+           #:delay))
 
 (in-package :wamp/util)
 
@@ -95,4 +96,6 @@
     :name ,name))
 
 
-
+(defun delay (time)
+  (bb:with-promise (resolve reject)
+    (as:delay #'(lambda () (resolve)) :time time)))

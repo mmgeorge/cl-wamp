@@ -51,10 +51,10 @@
           (t (read-socket self stream)))))
 
 
-(defmethod session:upgrade-request ((self http))
+(defmethod session:upgrade-request ((self http) &key host port)
   (with-accessors ((stream session::socket-stream)) self
     (format stream "GET /ws HTTP/1.1~c~c" #\return #\newline)
-    (format stream "Host: dev.owny.io:8081~c~c" #\return #\newline)
+    (format stream "Host: ~a:~a~c~c" host port #\return #\newline)
     (format stream "Upgrade: websocket~c~c" #\return #\newline)
     (format stream "Connection: Upgrade~c~c" #\return #\newline)
     (format stream "Sec-WebSocket-Key: ~a~c~c" (generate-nonce self) #\return #\newline)
@@ -83,7 +83,7 @@
       t)))
 
 
-(defmethod session:send ((self http) (condition error) &key start end)
+(defmethod session:send-text ((self http) (condition error) &key start end)
   (declare (ignore start end))
   (with-accessors ((stream session::socket-stream)) self
     (let ((message (format nil "~a" condition)))
@@ -98,6 +98,7 @@
       (format stream "~c~c" #\return #\newline)
       (format stream "~a" message)
       (force-output stream))))
+
 
 ;; Internal
 

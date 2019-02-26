@@ -3,11 +3,12 @@
   (:import-from :usocket)
   (:import-from :fast-http)
   (:import-from :flexi-streams)
-  (:export #:session #:recieve #:send #:send-error #:protocol #:socket-stream #:socket
+  (:export #:session #:recieve #:send-error #:protocol #:socket-stream #:socket #:set-peername
+           #:send-text #:send-binary
            #:status #:stop
            #:upgrade-accept #:upgrade-request
            #:index #:buffer
-           #:port #:address))
+           #:port #:address #:timestamp))
 
 (in-package :wamp/ws/session/session)
 
@@ -20,31 +21,20 @@
    (port :accessor port :initform 0)
    (address :accessor address :initform #(0 0 0 0))
    (socket :accessor socket)
+   (timestamp :accessor timestamp :initform (get-universal-time))
    (stream :accessor socket-stream))) ;; set by server on read-cb
 
 
-(defgeneric upgrade-request (self))
+(defgeneric upgrade-request (self &key))
 (defgeneric upgrade-accept (self request))
 (defgeneric recieve (self))
-(defgeneric send (self data &key start end))
+(defgeneric send-text (self data &key start end))
+(defgeneric send-binary (self data &key start end))
 
 
 (defmethod initialize-instance :after ((self session) &key socket bufsize (server-sock t))
   (setf (socket self) socket)
-  (setf (buffer self) (make-array bufsize :element-type '(unsigned-byte 8)))
-
-  ;; make peer name a getter instead? 
-  ;(when server-sock
-   ; (set-peername self socket))
-
-  )
-
-
-;; (defmethod update-instance-for-different-class :after ((sock as:async-io-stream) (self session) &key bufsize)
-;;   (unless (buffer self)
-;;     (setf (buffer self)
-;;           (make-array bufsize :element-type '(unsigned-byte 8))))
-;;   (set-ip4-details self sock))
+  (setf (buffer self) (make-array bufsize :element-type '(unsigned-byte 8))))
 
 
 (defun u32-to-u8888 (u32)
