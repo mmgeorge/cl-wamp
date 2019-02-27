@@ -9,6 +9,9 @@
 (in-package :wamp/ws/session/websocket)
 
 
+(defvar *max-frame-len* 65535)
+
+
 (defclass websocket (session)
   ((mask-frames :accessor mask-frames-p :initform nil)
    ;; Current parser state
@@ -30,14 +33,14 @@
         message))))
 
 
-(defmethod session:send-text ((self websocket) data &key start end)
-  (with-accessors ((stream session::socket-stream)) self
-    (write-frame stream :text data :start start :end end :use-mask (mask-frames-p self))))
+(defmethod session:send-text ((self websocket) data &key start end (max-len *max-frame-len*))
+  (with-accessors ((stream session::socket-stream) (use-mask mask-frames-p)) self
+    (write-frames stream :text data :start start :end end :use-mask (mask-frames-p self) :max-len max-len)))
 
 
-(defmethod session:send-binary ((self websocket) data &key start end)
-  (with-accessors ((stream session::socket-stream)) self
-    (write-frame stream :binary data :start start :end end :use-mask (mask-frames-p self))))
+(defmethod session:send-binary ((self websocket) data &key start end (max-len *max-frame-len*))
+  (with-accessors ((stream session::socket-stream) (use-mask mask-frames-p)) self
+    (write-frames stream :binary data :start start :end end :use-mask use-mask :max-len max-len)))
 
 
 (defmethod ping ((self websocket) data-or-nil &key (start 0) end)
@@ -54,6 +57,15 @@
         (write-frame stream opsym buffer :start start :end end)
         (write-frame stream opsym nil :start 0 :end 0))))
 
+
+(defun write-frames (stream opsym data &key start end max-len use-mask)
+  (let ((end (or end (length data))))
+    (loop for frame-start = start then (+ frame-start max-len)
+          for frame-end = (min end (+ frame-start max-len))
+          for fin = (eq end frame-end)
+          do (write-frame stream opsym data :fin fin :start frame-start :end frame-end :use-mask use-mask)
+          until fin)))
+  
 
 ;; Internal
 
@@ -91,9 +103,11 @@
 
 
 (defun read-standard-frame (self stream fin opsym len mask)
-  (with-accessors ((index session::index) (buffer session::buffer)) self 
+  (with-accessors ((index session::index) (buffer session::buffer)) self
+    (when (> (+ index len) (length buffer))
+      (error "Cannot read frame - message length ~a too large for buffer" len))
     (setf (current-op self) opsym)
-    (setf (index self)
+    (setf index
           (if mask
               (read-masked-body stream buffer mask index len)
               (read-body stream buffer index len)))
@@ -101,9 +115,8 @@
     (when fin (values (current-op self) buffer index))))
 
 
-(defun write-frame (stream opsym data &key (start 0) end (rsv nil) use-mask)
-  (let* ((fin t)
-         (end (or end (length data)))
+(defun write-frame (stream opsym data &key (fin t) (start 0) end (rsv nil) use-mask)
+  (let* ((end (or end (length data)))
          (len (- end start))
          (mask (and use-mask (random 2147483647))))
     (write-header stream fin opsym len mask rsv)

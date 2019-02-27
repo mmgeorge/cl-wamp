@@ -24,7 +24,7 @@
   ((session :reader session :initform nil)
    (host :reader host :initarg :host)
    (port :reader port :initarg :port)
-   (bufsize :reader bufsize :initform 1024 :initarg :bufsize)
+   (bufsize :reader bufsize :initform 9 :initarg :bufsize)
    (resolver :accessor resolver) ;; when NIL, handshake has finished
    (when-pong :accessor when-pong :initform nil)
    (status :accessor status :initform :open)))
@@ -51,8 +51,7 @@
         (let* ((async-stream (as:tcp-connect host port #'read-cb :connect-cb #'connect-cb :stream t))
                (socket (as:streamish async-stream)))
           (setf (resolver self) resolver)
-          (setf session (make-instance 'session/http:http :socket socket :bufsize (bufsize self)
-                                                          :server-sock t))
+          (setf session (make-instance 'session/http:http :socket socket :bufsize (bufsize self)))
           (setf (session:socket-stream session)
                 (flexi-streams:make-flexi-stream async-stream :external-format :utf-8))
           (as:with-delay (1)
@@ -66,7 +65,6 @@
 (defmethod stop ((self client))
   (when-let* ((session (session self))
               (socket (session:socket session)))
-    (Format t "closed sock ~%")
     (as:close-socket socket)))
 
 

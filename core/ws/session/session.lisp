@@ -32,9 +32,12 @@
 (defgeneric send-binary (self data &key start end))
 
 
-(defmethod initialize-instance :after ((self session) &key socket bufsize (server-sock t))
+(defmethod initialize-instance :after ((self session) &key socket bufsize)
+  "BUFSIZE indicates the size of the underlying buffer and max accepted websocket message length.
+   Calulated at (expt 2 (+ bufsize 9)) octets"
+  (check-type bufsize (integer 0 15))
   (setf (socket self) socket)
-  (setf (buffer self) (make-array bufsize :element-type '(unsigned-byte 8))))
+  (setf (buffer self) (make-array (expt 2 (+ bufsize 9)) :element-type '(unsigned-byte 8))))
 
 
 (defun u32-to-u8888 (u32)

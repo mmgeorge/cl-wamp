@@ -1,12 +1,12 @@
 (defpackage :wamp/ws/session/websocket.test 
-  (:use :cl :expect :wamp/ws/session/websocket :wamp/ws/session/session)
+  (:use :cl :expect :alexandria :wamp/ws/session/websocket :wamp/ws/session/session)
   (:import-from :flexi-streams))
 
 (in-package :wamp/ws/session/websocket.test)
 
 
 (defixture f-websocket ()
-  (let ((websocket (make-instance 'websocket :bufsize 1024 :socket nil)))
+  (let ((websocket (make-instance 'websocket :bufsize 15 :socket nil)))
     (setf (socket-stream websocket)
           (flex:make-in-memory-output-stream :element-type :utf-8))
     websocket))
@@ -29,6 +29,18 @@
       (expect (string-equal (flex:octets-to-string buffer :end end) "hello world")))))
 
 
+(deftest-of send-text ((websocket f-websocket))
+  "Send text message - multiframe"
+  (let ((message (flex:string-to-octets "hello world")))
+    (send-text websocket message :start 0 :end (length message) :max-len 2)
+    (convert-socket-stream websocket)
+    (when-let ((recv (recieve websocket)))
+      (destructuring-bind (opsym buffer end) recv
+        (expect (eq opsym :text))
+        (expect (eq end (length message)))
+        (expect (string-equal (flex:octets-to-string buffer :end end) "hello world"))))))
+
+
 (deftest-of send-binary ((websocket f-websocket))
   "Send binary message"
   (let ((message (make-array 3 :element-type '(unsigned-byte 8) :initial-contents '(97 98 99))))
@@ -38,6 +50,18 @@
       (expect (eq opsym :binary))
       (expect (eq end (length message)))
       (expect (equalp message (subseq buffer 0 end))))))
+
+(deftest-of send-binary ((websocket f-websocket))
+  "Send binary message - large"
+  (let ((message
+          (map 'vector #'random (make-array 100000 :element-type  '(unsigned-byte 8) :initial-element 255))))
+    (send-binary websocket message :start 0 :end (length message))
+    (convert-socket-stream websocket)
+    (when-let ((recv (recieve websocket)))
+      (destructuring-bind (opsym buffer end) recv
+        (expect (eq opsym :binary))
+        (expect (eq end (length message)))
+        (expect (equalp message (subseq buffer 0 end)))))))
 
 
 (deftest-of ping ((websocket f-websocket))

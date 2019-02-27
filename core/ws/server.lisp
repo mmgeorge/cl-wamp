@@ -37,21 +37,21 @@
    (cleanup-frequency :accessor cleanup-frequency :initarg :cleanup-frequency :initform 5)
    (cleanup-idler :accessor cleanup-idler :initform nil)
    (cleanup-since :accessor cleanup-since :initform (get-universal-time))
-   (buffer-size :reader buffer-size :initarg :buffer-size)))
+   (bufsize :reader bufsize :initarg :bufsize)))
 
 
-(defmethod initialize-instance :after ((self server) &key url (buffer-size 2))
-  "BUFFER-SIZE controls how large each session buffer will be, as long as the maximum length 
-   of a websocket message. Size is calculated as 2 ^ (9 + BUFFER-SIZE)"
-  (check-type buffer-size (integer 0 15))
+(defmethod initialize-instance :after ((self server) &key url (bufsize 9))
+  "BUFSIZE controls how large each session buffer will be, as long as the maximum length 
+   of a websocket message. Size is calculated as 2 ^ (9 + BUFSIZE)"
+  (check-type bufsize (integer 0 15))
   (check-type url string)
   (let ((uri (uri url))
-        (bufsize (expt 2 (+ 9 buffer-size)))) 
-    (with-slots (host port path origin authority buffer-size) self
+        (buffer-size bufsize)) 
+    (with-slots (host port path origin authority bufsize) self
       (setf host (uri-host uri))
       (setf port (uri-port uri))
       (setf path (uri-path uri))
-      (setf buffer-size bufsize))))
+      (setf bufsize buffer-size))))
 
 
 ;; Exports 
@@ -95,7 +95,7 @@
 
 (defmethod accept-client (self socket-wrapper)
   (let* ((socket (as:streamish socket-wrapper))
-         (session (make-instance 'session/http:http :socket socket :bufsize (buffer-size self))))
+         (session (make-instance 'session/http:http :socket socket :bufsize (bufsize self))))
     (session:set-peername session socket)
     (setf (as:socket-data socket) session)
     (setf (sessions self)
@@ -172,7 +172,6 @@
   (let ((headers (http-headers request)))
     (when (and (check-protocol self session request headers)
                (check-auth self session request headers))
-      (Describe (session:socket session) )
       (session:upgrade-accept session request)
       (change-class session 'session/websocket:websocket))))
 
