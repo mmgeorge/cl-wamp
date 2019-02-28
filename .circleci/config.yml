@@ -8,5 +8,5 @@ jobs:
           path: ~/common-lisp/wamp
       - run:
           name: Run cl-expect
-          command: sbcl --load run.lisp --non-interactive
+          command: cd ~/common-lisp/wamp && sbcl --load run.lisp --non-interactive
     
