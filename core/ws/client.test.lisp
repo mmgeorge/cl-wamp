@@ -8,14 +8,14 @@
 
 (defixture f-server ()
   (with-cleanup
-      (server:start (make-instance 'server:server :url "ws://0.0.0.0:8084/ws" :hostname "dev.owny.io"))
+      (server:start (make-instance 'server:server :url "ws://0.0.0.0:8085/ws" :hostname "dev.owny.io"))
     (lambda (server)
       (server:stop server))))
 
 
 (defixture f-client ()
   (with-cleanup
-      (start (make-instance 'client :host "dev.owny.io" :port 8084))
+      (start (make-instance 'client :host "dev.owny.io" :port 8085))
     (lambda (client)
       (stop client))))
 
