@@ -5,5 +5,5 @@ jobs:
       - image: mmgeorge/sbcl:latest
     steps:
       - checkout
-      - run:  sbcl --eval '(format t "hello world~%")' --non-interactive
+      - run: sbcl --load run.lisp --non-interactive
     
