@@ -5,7 +5,7 @@ jobs:
       - image: mmgeorge/sbcl:latest
     steps:
       - checkout:
-          path: ~/common-lisp/
+          path: ~/common-lisp/wamp
       - run:
           name: Run cl-expect
           command: sbcl --load run.lisp --non-interactive
