@@ -4,8 +4,8 @@ jobs:
     docker:
       - image: mmgeorge/sbcl:latest
     steps:
-      - checkout
-      - run: mv $CIRCLE_WORKING_DIRECTORY $HOME/common-lisp/
+      - checkout:
+          path: ~/common-lisp/
       - run:
           name: Run cl-expect
           command: sbcl --load run.lisp --non-interactive
