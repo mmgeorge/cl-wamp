@@ -5,5 +5,8 @@ jobs:
       - image: mmgeorge/sbcl:latest
     steps:
       - checkout
-      - run: sbcl --load run.lisp --non-interactive
+      - run: mv $CIRCLE_WORKING_DIRECTORY $HOME/common-lisp/
+      - run:
+          name: Run cl-expect
+          command: sbcl --load run.lisp --non-interactive
     
