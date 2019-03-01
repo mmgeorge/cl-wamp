@@ -17,7 +17,7 @@
 
 (defun start-event-loop ()
   (progn
-    (slynk-mrepl::send-prompt slynk-mrepl:*repl*)
+    ;(slynk-mrepl::send-prompt slynk-mrepl:*repl*)
     (as:start-event-loop
      (lambda ()
        (as:add-event-loop-exit-callback
@@ -25,7 +25,8 @@
             (format t "Event loop exited..~%")))
        (as:idle
         (lambda ()
-          (slynk::handle-requests (slynk::default-connection) t)))))))
+          ;(slynk::handle-requests (slynk::default-connection) t)
+          ))))))
 
 
 (unless lparallel:*kernel*
