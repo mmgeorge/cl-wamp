@@ -13,5 +13,5 @@ jobs:
           name: Run cl-expect
           command: cd ~/common-lisp/wamp && sbcl --load run.lisp --non-interactive
       - store_test_results:
-          path: ~/common-lisp/.test-output
+          path: ~/common-lisp/wamp/.test-output
     
