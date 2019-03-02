@@ -18,7 +18,7 @@
 
 (defun start-event-loop ()
   (progn
-    ;(slynk-mrepl::send-prompt slynk-mrepl:*repl*)
+    ; (slynk-mrepl::send-prompt slynk-mrepl:*repl*)
     (as:start-event-loop
      (lambda ()
        (as:add-event-loop-exit-callback
