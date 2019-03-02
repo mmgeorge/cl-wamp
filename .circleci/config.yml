@@ -7,6 +7,8 @@ jobs:
       - checkout:
           path: ~/common-lisp/wamp
       - run:
+          command: cd ~/common-lisp/cl-expect && git pull
+      - run:
           name: Run cl-expect
           command: cd ~/common-lisp/wamp && sbcl --load run.lisp --non-interactive
     
