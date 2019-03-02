@@ -20,28 +20,28 @@
       (stop client))))
 
 
-(deftest-of ping (f-server (client f-client))
-  "no application data"
-   (bb:attach
-    (ping client nil)
-    (lambda (data end)
-      (expect (eq nil data))
-      (expect (eq nil end)))))
+;; (deftest-of ping (f-server (client f-client))
+;;   "no application data"
+;;    (bb:attach
+;;     (ping client nil)
+;;     (lambda (data end)
+;;       (expect (eq nil data))
+;;       (expect (eq nil end)))))
 
 
-(deftest-of ping (f-server (client f-client))
-  "with application data"
-  (bb:attach
-   (ping client "abcd")
-   (lambda (data end)
-     (expect (equalp data #(97 98 99 100)))
-     (expect (eq end 4)))))
+;; (deftest-of ping (f-server (client f-client))
+;;   "with application data"
+;;   (bb:attach
+;;    (ping client "abcd")
+;;    (lambda (data end)
+;;      (expect (equalp data #(97 98 99 100)))
+;;      (expect (eq end 4)))))
 
 
-(deftest-of ping (f-server (client f-client))
-  "with application data - start, end"
-  (bb:attach
-   (ping client "abcd" :start 1 :end 2)
-   (lambda (data end)
-     (expect (equalp data #(98)))
-     (expect (eq end 1)))))
+;; (deftest-of ping (f-server (client f-client))
+;;   "with application data - start, end"
+;;   (bb:attach
+;;    (ping client "abcd" :start 1 :end 2)
+;;    (lambda (data end)
+;;      (expect (equalp data #(98)))
+;;      (expect (eq end 1)))))
