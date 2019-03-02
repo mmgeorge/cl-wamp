@@ -5,8 +5,8 @@
 
 (as:start-event-loop
  (lambda ()
-   (bb:wait (expect:run-tests "wamp")
-     (as:exit-event-loop))
+   (bb:wait (expect:run-tests "wamp" t)
+            (as:exit-event-loop))
    (as:add-event-loop-exit-callback
     #'(lambda ()
         (format t "Event loop exited..~%")))))
