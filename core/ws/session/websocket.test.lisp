@@ -18,11 +18,6 @@
           (flex:make-in-memory-input-stream sequence))))
 
 
-(deftest-of send-text ()
-  "Bad!"
-  (expect (eq 2 1))
-  )
-
 (deftest-of send-text ((websocket f-websocket))
   "Send text message"
   (let ((message (flex:string-to-octets "hello world")))
