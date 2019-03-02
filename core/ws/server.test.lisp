@@ -19,14 +19,14 @@
 
 (defixture f-server ()
   (with-cleanup
-      (start (make-instance 'echo-server :url "ws://0.0.0.0:8084/ws" :hostname "dev.owny.io"))
+      (start (make-instance 'echo-server :url "ws://0.0.0.0:8084/ws" :hostname "localhost"))
     (lambda (server)
       (stop server))))
 
 
 (defixture f-client ()
   (with-cleanup
-      (start (make-instance 'test-client :host "dev.owny.io" :port 8084))
+      (start (make-instance 'test-client :host "localhost" :port 8084))
     (lambda (client)
       (stop client))))
 
@@ -35,7 +35,7 @@
   "Accept a client, handle dropped connection"
   (setf (cleanup-frequency server) 0.1)
   (expect (eq (length (sessions server)) 0))
-  (let* ((client (make-instance 'client:client :host "dev.owny.io" :port 8084)))
+  (let* ((client (make-instance 'client:client :host "localhost" :port 8084)))
     (wait (client:start client)
       (expect (eq (length (sessions server)) 1))
       (wait (client:stop client)
@@ -48,7 +48,7 @@
   (bb:attach
    (bb:with-promise (resolve reject)
      (let* ((client (make-instance 'test-client
-                                   :host "dev.owny.io" :port 8084
+                                   :host "localhost" :port 8084
                                    :on-message #'(lambda (client message)
                                                    (resolve client message)))))
        (bb:wait (client:start client)
