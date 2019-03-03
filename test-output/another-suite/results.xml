@@ -16,10 +16,11 @@
   <testcase classname="JUnitXmlReporter.constructor2" name="should default useDotNotation to true1" time="10" />
   <testcase classname="JUnitXmlReporter.constructor3" name="should default useDotNotation to true2" time="0" />
   <testcase classname="JUnitXmlReporter.constructor4" name="should default useDotNotation to true3" time="20" />
-  <testcase classname="JUnitXmlReporter.constructor5" name="should default useDotNotation to true4" time="0" />
+  <testcase classname="JUnitXmlReporter.constructor5" name="should default useDotNotation to true4" time="0">
+      <error type="a-bad-condition" message="Bad things2">Assertion failed2</error>
+  </testcase>
   <testcase classname="JUnitXmlReporter.constructor" name="should default path to an empty string" time="0.006">
     <failure message="Bad things">Assertion failed</failure>
-    <failure message="Bad things2">Assertion failed2</failure>
   </testcase>
 </testsuite>
 </testsuites>
