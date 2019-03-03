@@ -11,7 +11,7 @@ jobs:
           command: cd ~/common-lisp/cl-expect && git pull
       - run:
           name: Run cl-expect
-          command: cd ~/common-lisp/wamp && sbcl --load run.lisp --non-interactive
+          command: cd ~/common-lisp/wamp && sbcl --load run.lisp --non-interactive && breakit
       - store_test_results:
           path: ~/common-lisp/wamp/.test-output/cl-wamp/results.xml
       - store_artifacts:
