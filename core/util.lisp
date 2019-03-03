@@ -2,7 +2,6 @@
   (:use :cl)
   (:import-from :blackbird #:create-promise)
   (:import-from :lparallel #:future)
-  (:import-from :slynk)
   (:import-from :cl-async)
   (:export #:with-timed-promise
            #:timeout-exceeded
