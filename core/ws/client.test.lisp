@@ -19,18 +19,6 @@
     (lambda (client)
       (stop client))))
 
-(deftest-of ping ()
-  "Fail test"
-  (expect (eq 2 1))
-  )
-
-
-(deftest-of ping ()
-  "Error test"
-  (error "WHAT!")
-  )
-
-
 
 (deftest-of ping (f-server (client f-client))
   "no application data"
