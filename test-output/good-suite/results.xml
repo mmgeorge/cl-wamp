@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+<testsuite name="JUnitXmlReporter" errors="0" tests="0" failures="0" time="0" timestamp="2013-05-24T10:23:58" />
+<testsuite name="JUnitXmlReporter.constructor" errors="0" skipped="1" tests="3" failures="1" time="0.006" timestamp="2013-05-24T10:23:58">
+  <testcase classname="JUnitXmlReporter.constructor" name="should default consolidate to true" time="0">
+    <skipped />
+  </testcase>
+  <testcase classname="JUnitXmlReporter.constructor2" name="should default useDotNotation to true1" time="10" />
+  <testcase classname="JUnitXmlReporter.constructor3" name="should default useDotNotation to true2" time="0" />
+  <testcase classname="JUnitXmlReporter.constructor4" name="should default useDotNotation to true3" time="20" />
+  <testcase classname="JUnitXmlReporter.constructor5" name="should default useDotNotation to true4" time="0" />
+</testsuite>
+</testsuites>
