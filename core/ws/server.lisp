@@ -107,6 +107,7 @@
   (let ((socket (session:socket session)))
     (setf (sessions self) (delete session (sessions self)))
     (setf (as:socket-data socket) nil)
+    (setf (session:status session) :closed)
     (as:close-socket socket)))
 
 
@@ -141,16 +142,22 @@
     (setf (session:socket-stream session)
           (flexi-streams:make-flexi-stream stream :external-format :utf-8))
     (handler-case (handle-session self session)
+      (auth-error (e)
+        (session:send-close session 1002 e)
+        (close-session self session)
+        (evented:handle self e))
       (protocol-error (e)
-        (session:send-text session e)
+        (session:send-close session 1002 e)
         (close-session self session)
         (evented:handle self e))
       (connection-error (e)
         (close-session self session)
         (evented:handle self e))
       (t (e)
+        (session:send-close session 1011 e)
         (report "Got an error ~a closing client" e)
-        (close-session self session)))))
+        (close-session self session))
+      )))
 
 
 ;; Internal
@@ -228,13 +235,26 @@
 
 (defun process-message (self session message)
   (destructuring-bind (opsym data end) message
-    (case opsym
+    (ecase opsym
       (:binary (recieve-binary self session data :start 0 :end end)) 
       (:text (recieve-text self session (flex:octets-to-string data :end end :external-format :utf-8)))
-      (:close (progn
-                (format t "Shutting down socket~%")
-                (close-session self session)
-                (setf (session:status session) :shutdown)))
+      (:close
+       (ecase (session:status session)
+         (:open 
+          ;; Move to session/websocket
+          (if data
+            (let ((code 0))
+              (setf (ldb (byte 8 8) code) (aref data 0))
+              (setf (ldb (byte 8 0) code) (aref data 1))
+              (format t "Server - got close message ~A ~%" code)
+              (setf (session/websocket:status-code session) code))
+            (setf (session/websocket:status-code session) 1005))
+            (session:send-close session 1000 nil)
+            (evented:handle self (make-instance 'evented:event :session session :name :normal-closure))
+            (close-session self session))
+         (:closing
+          (format t "Server - got close echoback message~%")
+          (close-session self session))))
       (:ping (session/websocket:pong session data :start 0 :end end))
       (:pong (setf (session:timestamp session) (get-universal-time))))))
 

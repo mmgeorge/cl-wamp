@@ -36,6 +36,7 @@
 (defgeneric recieve-text (self text))
 (defgeneric send-text (self text))
 (defgeneric send-binary (self buffer &key start end))
+(defgeneric send-close (self status))
 (defgeneric ping (self data-or-nil &key start end))
 
 
@@ -65,6 +66,7 @@
 (defmethod stop ((self client))
   (when-let* ((session (session self))
               (socket (session:socket session)))
+    (setf (session:status session) :closed)
     (as:close-socket socket)))
 
 
@@ -90,10 +92,20 @@
 (defun process-message (self message)
   (destructuring-bind (opsym data end) message
     (case opsym
-      (:binary (recieve-binary self data end))
+      (:binary (recieve-binary self data :end end))
       (:text (recieve-text self (flex:octets-to-string data :end end :external-format :utf-8)))
-      (:close (stop self))
       (:ping (session/websocket:pong (session self) data :start 0 :end end))
+      (:close
+       (let ((code 0))
+            (setf (ldb (byte 8 8) code) (aref data 0))
+            (setf (ldb (byte 8 0) code) (aref data 1))
+         (format t "Client - Got close message ~A~%" code))
+       (ecase (session:status (session self))
+         (:closing
+          (stop self))
+         (:open
+          (send-close self 1000) ;; should instead echo back sent code
+          (stop self))))
       (:pong
        (let ((resolve-fn (util:resolver-resolve-fn (when-pong self))))
          (setf (when-pong self) nil)
@@ -113,8 +125,14 @@
   (let ((message (flexi-streams:string-to-octets message)))
     (session:send-text (session self) message :start 0 :end (length message))))
 
+
 (defmethod send-binary ((self client) (message simple-array) &key (start 0) end)
   (session:send-binary (session self) message :start start :end end))
+
+
+(defmethod send-close ((self client) status)
+  (setf (session:status (session self)) :closing)
+  (session:send-close (session self) 1000 nil))
 
 
 (defmethod ping ((self client) data-or-nil &key (start 0) end)

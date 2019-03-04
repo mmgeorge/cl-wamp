@@ -41,7 +41,7 @@
       (wait (client:stop client)
         (wait (delay 1)
           (expect (eq (length (sessions server)) 0)))))))
-    
+
 
 (deftest-of echo-message (f-server)
   "Echo client message"

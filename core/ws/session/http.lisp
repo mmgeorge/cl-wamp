@@ -100,6 +100,21 @@
       (force-output stream))))
 
 
+(defmethod session:send-close ((self http) code reason?)
+  (let ((message (format nil "~A: ~A~%" code (session:normalize-reason reason?))))
+    (with-accessors ((stream session::socket-stream)) self
+      (format stream "HTTP/1.1 400 Bad Request~c~c" #\return #\newline)
+      (format stream "Server: cl-wamp~c~c" #\return #\newline)
+      (format stream "Date: " )
+      (local-time:format-timestring stream (local-time:now) :format local-time:+rfc-1123-format+)
+      (format stream "~c~c" #\return #\newline)
+      (format stream "Content-Length: ~a~c~c" (length message) #\return #\newline)
+      (format stream "Content-Language: en~c~c" #\return #\newline)
+      (format stream "Content-Type: text/plain; charset=utf-8~c~c" #\return #\newline)
+      (format stream "~c~c" #\return #\newline)
+      (format stream "~a" message)
+      (force-output stream))))
+
 ;; Internal
 
 (defun read-socket (self stream)

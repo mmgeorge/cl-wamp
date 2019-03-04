@@ -4,7 +4,7 @@
   (:import-from :wamp/ws/session/http #:http)
   (:import-from :wamp/ws/conditions #:connection-error)
   (:local-nicknames (:session :wamp/ws/session/session))
-  (:export #:websocket #:make-websocket #:ping #:pong))
+  (:export #:websocket #:make-websocket #:ping #:pong #:status-code))
 
 (in-package :wamp/ws/session/websocket)
 
@@ -15,13 +15,13 @@
 (defclass websocket (session)
   ((mask-frames :accessor mask-frames-p :initform nil)
    ;; Current parser state
-   (current-op :accessor current-op :initform nil)))
+   (current-op :accessor current-op :initform nil)
+   (status-code :accessor status-code :initform nil)))
 
 
 (defgeneric send (self data &key start end))
 (defgeneric pong (self data-or-nil &key start end))
 (defgeneric ping (self data-or-nil &key start end))
-
 
 ;; Exports
 
@@ -49,6 +49,13 @@
 
 (defmethod pong ((self websocket) data-or-nil &key (start 0) end)
   (write-ping-pong-frame self :pong data-or-nil :start start :end end))
+
+
+(defmethod session:send-close ((self websocket) code reason?)
+  (let* ((message (session:normalize-reason reason?))
+         (data (flex:string-to-octets message :external-format :utf-8)))
+    (with-accessors ((stream session::socket-stream) (use-mask mask-frames-p)) self
+      (write-frame stream :close data :code code :use-mask use-mask :start 0 :end (length data)))))
 
 
 (defun write-ping-pong-frame (self opsym buffer &key start end)
@@ -115,14 +122,14 @@
     (when fin (values (current-op self) buffer index))))
 
 
-(defun write-frame (stream opsym data &key (fin t) (start 0) end (rsv nil) use-mask)
+(defun write-frame (stream opsym data &key code (fin t) (start 0) end (rsv nil) use-mask)
   (let* ((end (or end (length data)))
-         (len (- end start))
+         (len (+ (- end start) (if code 2 0)))
          (mask (and use-mask (random 2147483647))))
     (write-header stream fin opsym len mask rsv)
     (if mask
         (error "Writing masked frames is not currently support")
-        (write-body stream data start end)))
+        (write-body stream data start end :code code)))
   (force-output stream))
 
 
@@ -285,7 +292,11 @@
   (read-sequence buffer stream :start start :end end))
 
 
-(defun write-body (stream data start end)
+(defun write-body (stream data start end &key code)
+  (when code
+    (check-type code (integer 0 65535))
+    (write-byte (ldb (byte 8 8) code) stream)
+    (write-byte (ldb (byte 8 0) code) stream))
   (write-sequence data stream :start start :end end))
 
 

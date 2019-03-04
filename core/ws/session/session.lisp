@@ -4,7 +4,8 @@
   (:import-from :fast-http)
   (:import-from :flexi-streams)
   (:export #:session #:recieve #:send-error #:protocol #:socket-stream #:socket #:set-peername
-           #:send-text #:send-binary
+           #:send-text #:send-binary #:send-close
+           #:normalize-reason
            #:status #:stop
            #:upgrade-accept #:upgrade-request
            #:index #:buffer
@@ -30,6 +31,22 @@
 (defgeneric recieve (self))
 (defgeneric send-text (self data &key start end))
 (defgeneric send-binary (self data &key start end))
+(defgeneric send-close (self code reason)
+  (:documentation "Send a close message with CODE where REASON, if non-nil, is either a condition or text"))
+
+(defun normalize-reason (reason?)
+  (etypecase reason?
+    (null "")
+    (condition (format nil "~A" reason?))
+    (t reason?)))
+
+
+(defmethod send-close (self code (reason null))
+  (call-next-method self code (format nil "~A" reason)))
+
+
+(defmethod send-close :after (self code reason)
+  (setf (status self) :closing))
 
 
 (defmethod initialize-instance :after ((self session) &key socket bufsize)

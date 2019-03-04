@@ -4,6 +4,7 @@
   :class :package-inferred-system
   :pathname "core"
   :depends-on ("wamp/session"
+               "wamp/router"
                "wamp/transport/websocket"
                "wamp/ws/server"
                "wamp/ws/client"))

@@ -15,7 +15,6 @@
 
 (in-package :wamp/session)
 
-(declaim (optimize (debug 3)))
 
 ;;(deftype match-t () 'string) ;;'(member "prefix" "wildcard" :test #'string-equal))
 ;;(deftype invoke-t () 'string) ;;'(member "first" "last" "roundrobin" "random" :test #'string-equal))

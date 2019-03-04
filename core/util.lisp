@@ -16,8 +16,12 @@
 
 
 (defun start-event-loop ()
-  (progn
-    ; (slynk-mrepl::send-prompt slynk-mrepl:*repl*)
+  (let ((slynk (find-package "SLYNK"))
+        (slynk-mrepl (find-package "SLYNK-MREPL")))
+    (progn
+      (when slynk-mrepl
+        (funcall (symbol-function (find-symbol "SEND-PROMPT" slynk-mrepl))
+                 (symbol-value (find-symbol "*REPL*" slynk-mrepl))))
     (as:start-event-loop
      (lambda ()
        (as:add-event-loop-exit-callback
@@ -25,8 +29,10 @@
             (format t "Event loop exited..~%")))
        (as:idle
         (lambda ()
-          ;(slynk::handle-requests (slynk::default-connection) t)
-          ))))))
+          (when slynk
+            (let ((default-conn (funcall (symbol-function (find-symbol "DEFAULT-CONNECTION" slynk)))))
+              (funcall (symbol-function (find-symbol "HANDLE-REQUESTS" slynk)) default-conn t)))
+          )))))))
 
 
 (unless lparallel:*kernel*
