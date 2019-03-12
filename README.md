@@ -1,4 +1,4 @@
- [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![CircleCI](https://circleci.com/gh/mmgeorge/cl-wamp.svg?style=svg)](https://circleci.com/gh/mmgeorge/cl-wamp) 
+ [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0) [![CircleCI](https://circleci.com/gh/mmgeorge/cl-wamp.svg?style=svg)](https://circleci.com/gh/mmgeorge/cl-wamp) 
 
 # cl-wamp
 A [WAMP](https://wamp-proto.org/) client for Common Lisp applications. Currently supports the basic client profile for RPC (pub-sub support is planned but not yet implemented). 
@@ -43,4 +43,4 @@ Using the `wait` method of the `blackbird` promise library, let wait for the `se
 TBC
 
 ## License 
-MIT
+AGPL
